@@ -201,9 +201,11 @@ static int hid_bpf_async_delayed_call(struct hid_bpf_ctx *hctx, u64 milliseconds
 
 	elem->hid = hctx->hid->id;
 
-	err = bpf_wq_set_callback(&elem->wq, wq_cb, 0);
-	if (err)
-		return err;
+	if (wq_cb) {
+		err = bpf_wq_set_callback(&elem->wq, wq_cb, 0);
+		if (err)
+			return err;
+	}
 
 	if (milliseconds) {
 		/* needed for every call because a cancel might unset this */
@@ -219,6 +221,28 @@ static int hid_bpf_async_delayed_call(struct hid_bpf_ctx *hctx, u64 milliseconds
 	}
 
 	return bpf_wq_start(&elem->wq, 0);
+}
+
+static inline int hid_bpf_async_set_delayed_cb(int key, hid_bpf_async_callback_t wq_cb)
+{
+	struct hid_bpf_async_map_elem *elem;
+
+	elem = bpf_map_lookup_elem(&hid_bpf_async_ctx_map, &key);
+	if (!elem)
+		return key;
+
+	bpf_spin_lock(&elem->lock);
+	/* The wq must be:
+	 * - HID_BPF_ASYNC_STATE_INITIALIZED -> it's been initialized and ready to be called
+	 * - HID_BPF_ASYNC_STATE_RUNNING -> possible re-entry from the wq itself
+	 */
+	if (elem->state != HID_BPF_ASYNC_STATE_INITIALIZED &&
+		elem->state != HID_BPF_ASYNC_STATE_RUNNING) {
+		return -EINVAL;
+	}
+	bpf_spin_unlock(&elem->lock);
+
+	return bpf_wq_set_callback(&elem->wq, wq_cb, 0);
 }
 
 static inline int hid_bpf_async_call(struct hid_bpf_ctx *ctx, int key,
