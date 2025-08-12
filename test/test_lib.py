@@ -304,3 +304,100 @@ class TestHuionInspiroy2S:
         events = [Report.from_bytes(e) for e in events]
 
         assert events == expected
+
+
+@pytest.mark.parametrize("source", ["0010-Huion__KeydialK20-Bluetooth"])
+class TestHuionKeydialK20Bluetooth:
+    @pytest.mark.parametrize("rdesc_size", [160, 114])
+    def test_probe(self, bpf, rdesc_size):
+        probe_args = HidProbeArgs(rdesc_size=rdesc_size)
+        pa = bpf.probe(probe_args)
+        assert pa.retval == 0
+
+    def test_probe_ignore_invalid_size(self, bpf):
+        probe_args = HidProbeArgs(rdesc_size=123)
+        pa = bpf.probe(probe_args)
+        assert pa.retval == -22
+
+    @pytest.mark.parametrize(
+        "modifier, button_key,expected_bit",
+        [
+            (0x00, 0x0E, 0),  # Button 1: K
+            (0x00, 0x0A, 1),  # Button 2: G
+            (0x00, 0x0F, 2),  # Button 3: L
+            (0x00, 0x4C, 3),  # Button 4: Delete
+            (0x00, 0x0C, 4),  # Button 5: I
+            (0x00, 0x07, 5),  # Button 6: D
+            (0x00, 0x05, 6),  # Button 7: B
+            (0x00, 0x08, 7),  # Button 8: E
+            (0x00, 0x16, 8),  # Button 9: S
+            (0x00, 0x1D, 9),  # Button 10: Z
+            (0x00, 0x06, 10),  # Button 11: C
+            (0x00, 0x19, 11),  # Button 12: V
+            (0x01, 0xFF, 12),  # Button 13: Control
+            (0x04, 0xFF, 13),  # Button 14: Alt
+            (0x02, 0xFF, 14),  # Button 15: Shift
+            (0x00, 0x28, 15),  # Button 16: Return Enter
+            (0x00, 0x2C, 16),  # Button 17: Spacebar
+            (0x00, 0x11, 17),  # Button 18: N
+        ],
+    )
+    def test_keyboard_button_events(self, bpf, modifier, button_key, expected_bit):
+        report = bytearray(9)
+        report[0] = 1  # Report ID
+        report[1] = modifier
+        report[4] = button_key
+
+        data = bpf.hid_bpf_device_event(report=bytes(report))
+
+        assert data[0] == 11  # OUR_REPORT_ID
+        assert data[1] & 0x1 == 0  # btn_stylus
+        assert data[2] == 0  # x
+        assert data[3] == 0  # y
+
+        # Check button state (bytes 4-7 as little-endian u32)
+        button_state = struct.unpack("<I", data[4:8])[0]
+        assert button_state == (1 << expected_bit)
+
+    @pytest.mark.parametrize("is_press", [True, False])
+    def test_center_button_event(self, bpf, is_press):
+        report = bytearray(3)
+        report[0] = 2  # Report ID
+        report[1] = 0xCD if is_press else 0x00  # Play/Pause key (205)
+
+        data = bpf.hid_bpf_device_event(report=bytes(report))
+
+        assert data[0] == 11  # OUR_REPORT_ID
+        assert data[1] & 0x1 == 0  # btn_stylus
+        assert data[2] == 0  # x
+        assert data[3] == 0  # y
+
+        # Center button should map to button 19 (bit 18)
+        button_state = struct.unpack("<I", data[4:8])[0]
+        if is_press:
+            assert button_state & (1 << 18) != 0
+        else:
+            assert button_state & (1 << 18) == 0
+
+    @pytest.mark.parametrize(
+        "wheel_value",
+        [
+            0xFF,  # Clockwise
+            0x01,  # Counterclockwise
+            0x00,  # No movement
+        ],
+    )
+    def test_wheel_events(self, bpf, wheel_value):
+        # Test Report ID 5 - wheel rotation events
+        report = bytearray(7)
+        report[0] = 5  # Report ID
+        report[6] = wheel_value  # Wheel data
+
+        data = bpf.hid_bpf_device_event(report=bytes(report))
+
+        # Should be converted to vendor report format
+        assert data[0] == 11  # OUR_REPORT_ID
+        assert data[1] & 0x1 == 0  # btn_stylus
+        assert data[2] == 0  # x
+        assert data[3] == 0  # y
+        assert data[8] == wheel_value

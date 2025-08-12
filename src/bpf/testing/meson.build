@@ -4,6 +4,7 @@
 # in the newer struct_ops approach and are thus compatible
 # for both approaches.
 tracing_sources = [
+    '0010-Huion__KeydialK20-Bluetooth.bpf.c',
 ]
 
 # 'sources' are BPF programs only compatible with
