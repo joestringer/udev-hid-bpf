@@ -11,6 +11,7 @@ tracing_sources = [
     '0010-XPPen__Deco01V3.bpf.c',
     '0020-Huion__Inspiroy-2-S.bpf.c',
     '0010-WALTOP__Batteryless-Tablet.bpf.c',
+    '0010-XPPen__Deco02.bpf.c'
 ]
 
 # 'sources' are BPF programs only compatible with
