@@ -17,6 +17,7 @@ workflow:
     - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
       when: never
     - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
 
 stages:
   - prep             # prep work like rebuilding the container images if there is a change
@@ -24,6 +25,7 @@ stages:
   - test
   - deploy
   - pages
+  - release
 
 variables:
   FDO_UPSTREAM_REPO: libevdev/udev-hid-bpf
@@ -558,3 +560,26 @@ pages:
       - public
   rules:
     - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE != "merge_request_event"
+
+#################################################################
+#                                                               #
+#                       release stage                           #
+#                                                               #
+#################################################################
+
+release_job:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG                 # Run this job when a tag is created
+  needs:
+    - make release
+  script:
+    - cp ./udev-hid-bpf.tar.xz ./udev-hid-bpf_$CI_COMMIT_TAG.tar.xz
+    - |
+      curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+           --upload-file ./udev-hid-bpf_$CI_COMMIT_TAG.tar.xz \
+           ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/udev-hid-bpf/$CI_COMMIT_TAG/udev-hid-bpf_$CI_COMMIT_TAG.tar.xz | tee upload.txt
+
+    # check that the upload was successful
+    -  grep '201 Created' upload.txt
