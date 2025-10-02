@@ -5,10 +5,12 @@ include!(concat!(env!("OUT_DIR"), "/attach.skel.rs"));
 use crate::hidudev;
 use anyhow::{bail, Context, Result};
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
-use libbpf_rs::{AsRawLibbpf, Btf, Object, OpenObject, Program};
+use libbpf_rs::{AsRawLibbpf, Btf, MapCore, Object, OpenObject, Program};
 use std::convert::TryInto;
+use std::ffi::OsStr;
 use std::fmt::Display;
 use std::fs;
+use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::raw::{c_int, c_uchar, c_uint};
 use std::path::Path;
@@ -67,11 +69,14 @@ pub trait HidBPFLoader {
     }
 
     fn probe(&self, object: &Object, device: &hidudev::HidUdev) -> Result<i32, BpfError> {
-        match object.prog("probe") {
+        match object
+            .progs()
+            .find(|prog| prog.name().to_str().unwrap() == OsStr::new("probe"))
+        {
             None => Ok(0),
             Some(probe) => {
                 let args = hid_bpf_probe_args::from(device);
-                run_syscall_prog_probe(probe, args)
+                run_syscall_prog_probe(&probe, args)
             }
         }
     }
@@ -88,8 +93,8 @@ pub trait HidBPFLoader {
         };
 
         object
-            .maps_iter_mut()
-            .filter(|m| m.name().ends_with(array_name))
+            .maps_mut()
+            .filter(|m| m.name().to_str().unwrap().ends_with(array_name))
             .for_each(|m| {
                 m.keys().for_each(|k| {
                     if let Some(mut data) = m.lookup(&k, libbpf_rs::MapFlags::ANY).unwrap() {
@@ -116,7 +121,7 @@ pub trait HidBPFLoader {
                                         data[start..end].clone_from_slice(buf);
 
                                         log::debug!(target: "libbpf",
-                                                   "inserting {}={} in map {}", prop.name, prop.value, m.name());
+                                                   "inserting {}={} in map {}", prop.name, prop.value, m.name().to_str().unwrap());
                                     }
 
                                     size_ok
@@ -125,7 +130,7 @@ pub trait HidBPFLoader {
                         }) {
                             let r = m.update(&k, &data, libbpf_rs::MapFlags::ANY);
                             log::debug!(target: "libbpf",
-                                        "updated map {}: {:?}", m.name(), r);
+                                        "updated map {}: {:?}", m.name().to_str().unwrap(), r);
                         }
                     }
                 });
@@ -161,8 +166,8 @@ pub trait HidBPFLoader {
     ) -> Result<Vec<String>, BpfError>;
 }
 
-pub struct HidBPFTrace<'a> {
-    inner: Option<AttachSkel<'a>>,
+pub struct HidBPFTrace {
+    supported: bool,
 }
 
 #[derive(Default)]
@@ -266,40 +271,51 @@ impl hid_bpf_probe_args {
     }
 }
 
-impl<'a> Default for HidBPFTrace<'a> {
+impl Default for HidBPFTrace {
     fn default() -> Self {
         let skel_builder = AttachSkelBuilder::default();
+        let mut open_object = MaybeUninit::uninit();
 
-        if let Ok(open_skel) = skel_builder.open() {
-            if let Ok(inner) = open_skel.load() {
-                return Self { inner: Some(inner) };
-            }
-        }
+        // Test if the kernel supports HidBPFTrace by trying to load the skeleton
+        let supported = skel_builder
+            .open(&mut open_object)
+            .map(|skel| skel.load())
+            .is_ok();
 
-        Self { inner: None }
+        Self { supported }
     }
 }
 
-impl<'a> HidBPFTrace<'a> {
+impl HidBPFTrace {
     fn load_prog(&self, prog: &Program, hid_id: u32, bpffs_path: &str) -> Result<String> {
-        let inner = self.inner.as_ref().expect("open_and_load() never called!");
+        // Create skeleton on demand
+        let skel_builder = AttachSkelBuilder::default();
+        let mut open_object = MaybeUninit::uninit();
+
+        let attach_obj = skel_builder
+            .open(&mut open_object)
+            .context("Failed to open skeleton")?
+            .load()
+            .context("Failed to load skeleton")?;
+
         let attach_args = AttachProgArgs {
             prog_fd: prog.as_fd().as_raw_fd(),
             hid: hid_id,
             retval: -1,
         };
 
-        let link = run_syscall_prog_attach(inner.progs().attach_prog(), attach_args)
-            .context(format!("failed the syscall for {}", prog.name()))?;
+        let link = run_syscall_prog_attach(&attach_obj.progs.attach_prog, attach_args).context(
+            format!("failed the syscall for {}", prog.name().to_str().unwrap()),
+        )?;
 
         log::debug!(
             target: "libbpf",
             "successfully attached {} to device id {}",
-            &prog.name(),
+            &prog.name().to_str().unwrap(),
             hid_id,
         );
 
-        let path = format!("{}/{}", bpffs_path, prog.name(),);
+        let path = format!("{}/{}", bpffs_path, prog.name().to_str().unwrap(),);
 
         fs::create_dir_all(bpffs_path).unwrap_or_else(|why| {
             log::warn!("! {:?}", why.kind());
@@ -307,7 +323,7 @@ impl<'a> HidBPFTrace<'a> {
 
         pin_hid_bpf_prog(link, &path).context(format!(
             "could not pin {} to device id {}",
-            &prog.name(),
+            &prog.name().to_str().unwrap(),
             hid_id
         ))?;
 
@@ -323,9 +339,9 @@ impl<'a> HidBPFTrace<'a> {
         bpffs_path: &str,
     ) -> Result<Vec<String>, BpfError> {
         let attached: Vec<String> = object
-            .progs_iter()
+            .progs()
             .filter(|p| matches!(p.prog_type(), libbpf_rs::ProgramType::Tracing))
-            .map(|p| self.load_prog(p, hid_id, bpffs_path))
+            .map(|p| self.load_prog(&p, hid_id, bpffs_path))
             .inspect(|r| {
                 if let Err(e) = r {
                     log::warn!("failed to attach to device id {}: {:#}", hid_id, e,);
@@ -344,13 +360,14 @@ impl<'a> HidBPFTrace<'a> {
     }
 }
 
-impl<'a> HidBPFLoader for HidBPFTrace<'a> {
+impl HidBPFLoader for HidBPFTrace {
     fn load(&self, object: OpenObject, _device: &hidudev::HidUdev) -> Result<Object, BpfError> {
-        match self.inner {
-            None => Err(BpfError::OsError {
+        if self.supported {
+            Ok(object.load()?)
+        } else {
+            Err(BpfError::OsError {
                 errno: libc::ENOTSUP as u32,
-            }),
-            Some(_) => Ok(object.load()?),
+            })
         }
     }
     fn attach_and_pin(
@@ -374,9 +391,9 @@ impl HidBPFLoader for HidBPFStructOps {
         let bytes_hid_id: [u8; 4] = device.id().to_le_bytes();
 
         open_object
-            .maps_iter_mut()
+            .maps_mut()
             .filter(|m| matches!(m.map_type(), libbpf_rs::MapType::StructOps))
-            .for_each(|m| {
+            .for_each(|mut m| {
                 if let Some(data) = m.initial_value_mut() {
                     data[0..4].copy_from_slice(&bytes_hid_id);
                 }
@@ -409,10 +426,10 @@ impl HidBPFLoader for HidBPFStructOps {
         });
 
         object
-            .maps_iter_mut()
+            .maps_mut()
             .filter(|m| matches!(m.map_type(), libbpf_rs::MapType::StructOps))
-            .map(|m| {
-                let path = format!("{}/{}", bpffs_path, m.name());
+            .map(|mut m| {
+                let path = format!("{}/{}", bpffs_path, m.name().to_str().unwrap());
 
                 m.attach_struct_ops()?.pin(&path)?;
                 Ok(path)
@@ -425,9 +442,9 @@ fn get_bpf_loader(open_object: &OpenObject) -> &'static dyn HidBPFLoader {
     static HID_BPF_TRACE: OnceLock<HidBPFTrace> = OnceLock::new();
     static HID_BPF_STRUCT_OPS: OnceLock<HidBPFStructOps> = OnceLock::new();
 
-    let have_struct_ops: bool = open_object.progs_iter().any(|p| {
+    let have_struct_ops: bool = open_object.progs().any(|p| {
         matches!(p.prog_type(), libbpf_rs::ProgramType::StructOps)
-            && p.section().starts_with("struct_ops/hid_")
+            && p.section().to_str().unwrap().starts_with("struct_ops/hid_")
     });
 
     if !have_struct_ops {
@@ -442,12 +459,12 @@ fn get_bpf_loader(open_object: &OpenObject) -> &'static dyn HidBPFLoader {
 impl HidBPF {
     fn pin_maps(object: &mut Object, bpffs_path: &String) -> Result<()> {
         // compiler internal maps contain the name of the object and a dot
-        for map in object
-            .maps_iter_mut()
-            .filter(|map| !map.name().contains('.'))
+        for mut map in object
+            .maps_mut()
+            .filter(|map| !map.name().to_str().unwrap().contains('.'))
             .filter(|m| !matches!(m.map_type(), libbpf_rs::MapType::StructOps))
         {
-            let path = format!("{}/{}", bpffs_path, map.name(),);
+            let path = format!("{}/{}", bpffs_path, map.name().to_str().unwrap(),);
 
             map.pin(&path)
                 .context(format!("Failed to pin map at {}", path))?;

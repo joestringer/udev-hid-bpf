@@ -403,17 +403,17 @@ fn inspect(path: &PathBuf) -> Result<InspectionData> {
     let mut obj_builder = libbpf_rs::ObjectBuilder::default();
     let object = obj_builder.open_file(path.clone()).unwrap();
     let programs: Vec<InspectionProgram> = object
-        .progs_iter()
+        .progs()
         .map(|prog| InspectionProgram {
-            name: prog.name().unwrap().to_string(),
-            section: prog.section().to_string(),
+            name: prog.name().to_str().unwrap().to_string(),
+            section: prog.section().to_str().unwrap().to_string(),
         })
         .collect();
 
     let maps: Vec<InspectionMap> = object
-        .maps_iter()
+        .maps()
         .map(|map| InspectionMap {
-            name: map.name().unwrap().to_string(),
+            name: map.name().to_str().unwrap().to_string(),
         })
         .collect();
 
