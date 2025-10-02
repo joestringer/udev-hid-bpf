@@ -82,7 +82,8 @@ variables:
   # Below is for our building of the kernel used in the b2c jobs. A separate tag
   # so we can rebuild that container kernel independently of the rest of the CI pipeline.
   KERNEL_BUILD_CONTAINER_TAG: '2025-01-13.0'
-  KERNEL_VERSION: '6.12'
+  STRUCT_OPS_KERNEL_VERSION: '6.12'
+  TRACING_KERNEL_VERSION: '6.6.108'
   KERNEL_BUILD_PACKAGES: >
     dwarves
     file
@@ -233,6 +234,10 @@ kernel build container prep:
 
 # Builds a kernel and upoads it to the project's packages
 rebuild kernel:
+  parallel:
+    matrix:
+      - KERNEL_VERSION: $STRUCT_OPS_KERNEL_VERSION
+      - KERNEL_VERSION: $TRACING_KERNEL_VERSION
   extends:
     - .fdo.suffixed-image@fedora
     - .kernel_build_variables
@@ -433,7 +438,17 @@ vng uhid-test:
   parallel:
     matrix:
       - TEST: test-udev-load
+        KERNEL_VERSION: $STRUCT_OPS_KERNEL_VERSION
+        PARAMS: ""
       - TEST: test-path-load
+        KERNEL_VERSION: $STRUCT_OPS_KERNEL_VERSION
+        PARAMS: ""
+      - TEST: test-udev-load
+        KERNEL_VERSION: $TRACING_KERNEL_VERSION
+        PARAMS: --load-tracing-bpf
+      - TEST: test-path-load
+        KERNEL_VERSION: $TRACING_KERNEL_VERSION
+        PARAMS: --load-tracing-bpf
   variables:
     MESON_BUILDDIR: build_dir
   script:
@@ -445,7 +460,7 @@ vng uhid-test:
     - export MESON_EXTRA_ARGS="-Dbpfs=testing,stable,userhacks -Dprefix=$instdir -Dudevdir=$instdir/etc/udev"
     - .gitlab-ci/meson-build.sh
 
-    - export COMMAND="test/uhid-test.sh --verbose $TEST"
+    - export COMMAND="test/uhid-test.sh --verbose $PARAMS $TEST"
     - export -p > .vngenv
 
     # the container is executed as root, so vng needs some fine tuning
