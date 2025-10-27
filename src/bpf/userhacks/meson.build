@@ -12,6 +12,7 @@ tracing_sources = [
     '0010-trace_hid_events.bpf.c',
     '0010-noop-probe-fail.bpf.c',
     '0010-noop-probe-succeed.bpf.c',
+    '0010-mini-keyboard.bpf.c',
 ]
 
 # 'sources' are BPF programs only compatible with
