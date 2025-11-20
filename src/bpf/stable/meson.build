@@ -13,6 +13,7 @@ tracing_sources = [
     '0010-Huion__Kamvas16Gen3.bpf.c',
     '0010-Huion__KeydialK20.bpf.c',
     '0010-IOGEAR__Kaliber-MMOmentum.bpf.c',
+    '0010-Logitech__SpaceNavigator.bpf.c',
     '0010-Microsoft__Xbox-Elite-2.bpf.c',
     '0010-Mistel__MD770.bpf.c',
     '0010-Rapoo__M50-Plus-Silent.bpf.c',
