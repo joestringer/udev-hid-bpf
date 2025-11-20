@@ -571,12 +571,14 @@ int BPF_PROG(hid_fix_rdesc_huion_kamvas16_gen3, struct hid_bpf_ctx *hid_ctx)
 		 * Disable the unused devices
 		 */
 		if (rdesc_size == TABLET_DESCRIPTOR_LENGTH) {
-			__builtin_memcpy(data, disabled_rdesc_tablet, sizeof(disabled_rdesc_tablet));
+			__builtin_memcpy(data, disabled_rdesc_tablet,
+					 sizeof(disabled_rdesc_tablet));
 			return sizeof(disabled_rdesc_tablet);
 		}
 
 		if (rdesc_size == WHEEL_DESCRIPTOR_LENGTH) {
-			__builtin_memcpy(data, disabled_rdesc_wheel, sizeof(disabled_rdesc_wheel));
+			__builtin_memcpy(data, disabled_rdesc_wheel,
+					 sizeof(disabled_rdesc_wheel));
 			return sizeof(disabled_rdesc_wheel);
 		}
 	}
@@ -609,7 +611,8 @@ int BPF_PROG(hid_fix_event_huion_kamvas16_gen3, struct hid_bpf_ctx *hid_ctx)
 
 	__u8 report_subtype = (data[1] >> 4) & 0x0f;
 
-	if (report_subtype == VENDOR_REPORT_SUBTYPE_PEN || report_subtype == VENDOR_REPORT_SUBTYPE_PEN_OUT) {
+	if (report_subtype == VENDOR_REPORT_SUBTYPE_PEN ||
+	    report_subtype == VENDOR_REPORT_SUBTYPE_PEN_OUT) {
 		/* Invert Y tilt */
 		data[11] = -data[11];
 
@@ -628,7 +631,8 @@ int BPF_PROG(hid_fix_event_huion_kamvas16_gen3, struct hid_bpf_ctx *hid_ctx)
 
 		data[4] = x_24;
 
-	} else if (report_subtype == VENDOR_REPORT_SUBTYPE_BUTTONS || report_subtype == VENDOR_REPORT_SUBTYPE_WHEELS) {
+	} else if (report_subtype == VENDOR_REPORT_SUBTYPE_BUTTONS ||
+		   report_subtype == VENDOR_REPORT_SUBTYPE_WHEELS) {
 		struct pad_report {
 			__u8 report_id;
 			__u8 btn_stylus:1;
