@@ -21,7 +21,7 @@ HID_BPF_CONFIG(
 #define BARREL_SWITCH BIT(1)
 #define SECONDARY_BARREL_SWITCH BIT(5)
 
-static __u8 last_button_state = 0;
+static __u8 last_button_state;
 
 static const __u8 fixed_rdesc[] = {
 	0x05, 0x01,                    // Usage Page (Generic Desktop)
@@ -194,32 +194,35 @@ static const __u8 fixed_rdesc[] = {
 	0xc0,                          //   End Collection
 };
 
-static inline unsigned bitwidth32(__u32 x) {
+static inline unsigned int bitwidth32(__u32 x)
+{
 	return 32 - __builtin_clzg(x, 32);
 }
 
-static inline unsigned floor_log2_32(__u32 x) {
+static inline unsigned int floor_log2_32(__u32 x)
+{
 	return bitwidth32(x) - 1;
 }
 
 /* Maps the interval [0, 2047] to itself using a scaled
  * approximation of the function log2(x+1).
  */
-static unsigned scaled_log2(__u16 v) {
-	const unsigned XMAX = 2047;
-	const unsigned YMAX = 11; /* log2(2048) = 11 */
+static unsigned int scaled_log2(__u16 v)
+{
+	const unsigned int XMAX = 2047;
+	const unsigned int YMAX = 11; /* log2(2048) = 11 */
 
-	unsigned x = v + 1;
-	unsigned n = floor_log2_32(x);
-	unsigned b = 1 << n;
+	unsigned int x = v + 1;
+	unsigned int n = floor_log2_32(x);
+	unsigned int b = 1 << n;
 
 	/* Fixed-point fraction in [0, 1), linearly
 	 * interpolated using delta-y = 1 and
 	 * delta-x = (2b - b) = b.
 	 */
-	unsigned frac = (x - b) << YMAX;
-	unsigned lerp = frac / b;
-	unsigned log2 = (n << YMAX) + lerp;
+	unsigned int frac = (x - b) << YMAX;
+	unsigned int lerp = frac / b;
+	unsigned int log2 = (n << YMAX) + lerp;
 
 	return ((log2 * XMAX) / YMAX) >> YMAX;
 }
@@ -241,10 +244,12 @@ SEC(HID_BPF_DEVICE_EVENT)
 int BPF_PROG(waltop_fix_events, struct hid_bpf_ctx *hctx)
 {
 	__u8 *data = hid_bpf_get_data(hctx, 0 /* offset */, 10 /* size */);
+
 	if (!data)
 		return 0; /* EPERM check */
 
 	__u8 report_id = data[0];
+
 	if (report_id != PEN_REPORT_ID)
 		return 0;
 
@@ -286,11 +291,10 @@ int BPF_PROG(waltop_fix_events, struct hid_bpf_ctx *hctx)
 
 	__u16 pressure = (((__u16)data[6]) << 0) | (((__u16)data[7]) << 8);
 
-	if (pressure <= 102) {
+	if (pressure <= 102)
 		pressure *= 12;
-	} else {
+	else
 		pressure = scaled_log2(pressure);
-	}
 
 	data[6] = pressure >> 0;
 	data[7] = pressure >> 8;

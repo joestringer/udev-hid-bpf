@@ -19,6 +19,7 @@ tracing_sources = [
     '0010-Rapoo__M50-Plus-Silent.bpf.c',
     '0010-TUXEDO__Sirius-16-Gen1-and-Gen2.bpf.c',
     '0010-Thrustmaster__TCA-Yoke-Boeing.bpf.c',
+    '0010-WALTOP__Batteryless-Tablet.bpf.c',
     '0010-Wacom__ArtPen.bpf.c',
     '0010-XPPen__Artist24.bpf.c',
     '0010-XPPen__DecoMini4.bpf.c',
