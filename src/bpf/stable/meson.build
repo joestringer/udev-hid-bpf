@@ -33,6 +33,7 @@ tracing_sources = [
 # struct_ops (kernel v6.11+)
 sources = [
     '0010-XPPen__ACK05.bpf.c',
+    '0030-XPPen__ArtistPro16Gen2.bpf.c',
 ]
 
 foreach bpf: tracing_sources
