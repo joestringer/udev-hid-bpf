@@ -9,6 +9,7 @@ tracing_sources = [
     '0010-Huion__Dial-2.bpf.c',
     '0010-Huion__Inspiroy-2-M.bpf.c',
     '0010-Huion__Inspiroy-2-S.bpf.c',
+    '0010-Huion__Kamvas13Gen3.bpf.c',
     '0010-Huion__KeydialK20.bpf.c',
     '0010-IOGEAR__Kaliber-MMOmentum.bpf.c',
     '0010-Microsoft__Xbox-Elite-2.bpf.c',
