@@ -22,6 +22,7 @@ tracing_sources = [
     '0020-Huion__Inspiroy-2-S.bpf.c',
     '0020-Huion__Kamvas-Pro-19.bpf.c',
     '0020-XPPen__ArtistPro16Gen2.bpf.c',
+    '0030-Huion__Kamvas-Pro-19.bpf.c',
 ]
 
 # 'sources' are BPF programs only compatible with
