@@ -236,10 +236,14 @@ int BPF_PROG(xppen_deco01v3_rdesc_fixup, struct hid_bpf_ctx *hctx)
 		__builtin_memcpy(data, fixed_rdesc_pad, sizeof(fixed_rdesc_pad));
 		return sizeof(fixed_rdesc_pad);
 	case PEN_REPORT_DESCRIPTOR_LENGTH:
-		if (__builtin_memcmp(&data[89], wrong_logical_range, sizeof(wrong_logical_range)) == 0)
-			__builtin_memcpy(&data[89], correct_logical_range, sizeof(correct_logical_range));
-		if (__builtin_memcmp(&data[101], wrong_logical_range, sizeof(wrong_logical_range)) == 0)
-			__builtin_memcpy(&data[101], correct_logical_range, sizeof(correct_logical_range));
+		if (__builtin_memcmp(&data[89], wrong_logical_range,
+				     sizeof(wrong_logical_range)) == 0)
+			__builtin_memcpy(&data[89], correct_logical_range,
+					 sizeof(correct_logical_range));
+		if (__builtin_memcmp(&data[101], wrong_logical_range,
+				     sizeof(wrong_logical_range)) == 0)
+			__builtin_memcpy(&data[101], correct_logical_range,
+					 sizeof(correct_logical_range));
 		break;
 	}
 

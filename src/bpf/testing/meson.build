@@ -4,7 +4,6 @@
 # in the newer struct_ops approach and are thus compatible
 # for both approaches.
 tracing_sources = [
-    '0010-XPPen__Deco01V3.bpf.c',
     '0010-XPPen__Deco02.bpf.c'
 ]
 
