@@ -544,7 +544,7 @@ int BPF_PROG(inspiroy_2_fix_events, struct hid_bpf_ctx *hctx)
 			 */
 			if (last_tip_state &&
 			    last_sec_barrel_state != sec_barrel_state) {
-                                force_tip_down_count = 4;
+				force_tip_down_count = 4;
 				data[1] |= 0x1;
 			}
 			last_tip_state = tip_state;
