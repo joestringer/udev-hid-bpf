@@ -1,5 +1,5 @@
 project('udev-hid-bpf', 'rust', 'c',
-        version: '2.1.0-20240704', # Update Cargo.toml too!
+        version: '2.2.0-20251121', # Update Cargo.toml too!
         default_options : [ 'c_std=gnu99', 'warning_level=2' ],
         meson_version: '>= 1.0.0')
 
