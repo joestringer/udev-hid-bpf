@@ -22,6 +22,7 @@ if bpf_compiler == 'clang'
 elif bpf_compiler == 'gcc'
         bpf_gcc = find_program('bpf-gcc',
                                'bpf-none-gcc',
+                               'bpf-unknown-none-gcc',
                                required : true,
                                version : '>= 13.1.0')
 else
@@ -49,6 +50,7 @@ bpf_gcc_flags = [
         '-std=gnu11',
         '-fno-stack-protector',
         '-fno-ssa-phiopt',
+        '-ffreestanding',
         '-O2',
         '-mcpu=v3',
         '-mco-re',
