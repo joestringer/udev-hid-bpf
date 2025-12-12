@@ -442,12 +442,12 @@ fn get_bpf_loader(open_object: &OpenObject) -> &'static dyn HidBPFLoader {
     static HID_BPF_TRACE: OnceLock<HidBPFTrace> = OnceLock::new();
     static HID_BPF_STRUCT_OPS: OnceLock<HidBPFStructOps> = OnceLock::new();
 
-    let have_struct_ops: bool = open_object.progs().any(|p| {
-        matches!(p.prog_type(), libbpf_rs::ProgramType::StructOps)
-            && p.section().to_str().unwrap().starts_with("struct_ops/hid_")
+    let have_tracing: bool = open_object.progs().any(|p| {
+        matches!(p.prog_type(), libbpf_rs::ProgramType::Tracing)
+            && p.section().to_str().unwrap().starts_with("fmodret/hid_")
     });
 
-    if !have_struct_ops {
+    if have_tracing {
         log::debug!("Using HID_BPF_TRACE");
         HID_BPF_TRACE.get_or_init(HidBPFTrace::default)
     } else {
