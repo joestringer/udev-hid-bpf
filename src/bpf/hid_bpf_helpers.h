@@ -294,5 +294,59 @@ struct hid_rdesc_descriptor {
 	struct hid_rdesc_report feature_reports[HID_MAX_REPORTS];
 } __packed;
 
+/* Base macro for iterating over HID arrays with bounds checking.
+ * Follows the bpf_for pattern from libbpf.
+ */
+#define __hid_bpf_for_each_array(array, num_elements, max_elements, var)              \
+	for (                                                                          \
+		/* initialize and define destructor */                                 \
+		struct bpf_iter_num ___it __attribute__((aligned(8),                   \
+							 cleanup(bpf_iter_num_destroy))),      \
+		/* ___p pointer is necessary to call bpf_iter_num_new() *once* */      \
+				    *___p __attribute__((unused)) = (                  \
+			/* always initialize iterator; if bounds fail, iterate 0 times */ \
+			bpf_iter_num_new(&___it, 0,                                    \
+					 (num_elements) > (max_elements) ?             \
+						0 : (num_elements)),                   \
+			/* workaround for Clang bug */                                 \
+			(void)bpf_iter_num_destroy, (void *)0);                        \
+		({                                                                     \
+			/* iteration step */                                           \
+			int *___t = bpf_iter_num_next(&___it);                         \
+			int ___i;                                                      \
+			/* termination and bounds check, assign var */                 \
+			(___t && (___i = *___t, ___i >= 0 && ___i < (num_elements)) && \
+			 ((num_elements) <= (max_elements)) &&                         \
+			 (var = &(array)[___i], 1));                                   \
+		});                                                                    \
+	)
+
+/* Iterate over input reports in a descriptor */
+#define hid_bpf_for_each_input_report(descriptor, report_var) \
+	__hid_bpf_for_each_array((descriptor)->input_reports, \
+				 (descriptor)->num_input_reports, \
+				 HID_MAX_REPORTS, report_var)
+
+/* Iterate over feature reports in a descriptor */
+#define hid_bpf_for_each_feature_report(descriptor, report_var) \
+	__hid_bpf_for_each_array((descriptor)->feature_reports, \
+				 (descriptor)->num_feature_reports, \
+				 HID_MAX_REPORTS, report_var)
+
+/* Iterate over output reports in a descriptor */
+#define hid_bpf_for_each_output_report(descriptor, report_var) \
+	__hid_bpf_for_each_array((descriptor)->output_reports, \
+				 (descriptor)->num_output_reports, \
+				 HID_MAX_REPORTS, report_var)
+
+/* Iterate over fields in a report */
+#define hid_bpf_for_each_field(report, field_var) \
+	__hid_bpf_for_each_array((report)->fields, (report)->num_fields, \
+				 HID_MAX_FIELDS, field_var)
+
+/* Iterate over collections in a field */
+#define hid_bpf_for_each_collection(field, collection_var) \
+	__hid_bpf_for_each_array((field)->collections, (field)->num_collections, \
+				 HID_MAX_COLLECTIONS, collection_var)
 
 #endif /* __HID_BPF_HELPERS_H */
