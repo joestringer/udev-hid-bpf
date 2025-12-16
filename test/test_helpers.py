@@ -5,6 +5,7 @@
 """
 Tests for new BPF helper functionality:
 - HID report descriptor injection
+- extract_bits optimizations (8/16/32-bit aligned fast paths)
 - Iterator macros (hid_bpf_for_each_*)
 """
 
@@ -136,6 +137,81 @@ def create_hid_rdesc(
     rdesc.extend([0xC0])  # End Collection
 
     return rdesc
+
+
+@pytest.mark.parametrize("source", ["0010-test-helpers"])
+class TestExtractBits:
+    """Test extract_bits function with various alignments and sizes."""
+
+    @pytest.mark.parametrize(
+        "bits_start,bits_end,byte_data,expected",
+        [
+            pytest.param(8, 16, [(1, 0x42)], 0x42, id="8bit_aligned"),
+            pytest.param(16, 32, [(2, 0x34), (3, 0x12)], 0x1234, id="16bit_aligned"),
+            pytest.param(
+                32,
+                64,
+                [(4, 0x78), (5, 0x56), (6, 0x34), (7, 0x12)],
+                0x12345678,
+                id="32bit_aligned",
+            ),
+            pytest.param(4, 16, [(0, 0xC0), (1, 0xAB)], 0xABC, id="unaligned_12bit"),
+            pytest.param(8, 16, [], 0, id="zero_8bit"),
+            pytest.param(16, 32, [], 0, id="zero_16bit"),
+            pytest.param(32, 64, [], 0, id="zero_32bit"),
+        ],
+    )
+    def test_extract_bits(self, bpf, bits_start, bits_end, byte_data, expected):
+        """Test extract_bits with various bit ranges and alignments."""
+        # Set BPF test parameters
+        bpf.set_global_u32("test_bits_start", bits_start)
+        bpf.set_global_u32("test_bits_end", bits_end)
+
+        # Create report with specified byte values
+        report = bytearray(64)
+        for offset, value in byte_data:
+            report[offset] = value
+
+        # Process the report
+        result = bpf.hid_bpf_device_event(report=bytes(report))
+
+        # Event passes through unchanged
+        assert result == bytes(report)
+
+        # Check the extracted value
+        test_result = bpf.get_global_u32("test_extract_result")
+        assert test_result == expected, (
+            f"Extract bits[{bits_start}:{bits_end}] expected 0x{expected:X}, "
+            f"got 0x{test_result:X}"
+        )
+
+    @pytest.mark.parametrize(
+        "bits_start,bits_end,expected",
+        [
+            pytest.param(8, 16, 0xFF, id="max_8bit"),
+            pytest.param(16, 32, 0xFFFF, id="max_16bit"),
+            pytest.param(32, 64, 0xFFFFFFFF, id="max_32bit"),
+        ],
+    )
+    def test_extract_max_values(self, bpf, bits_start, bits_end, expected):
+        """Test extract_bits with all bits set to verify masking."""
+        # Set BPF test parameters
+        bpf.set_global_u32("test_bits_start", bits_start)
+        bpf.set_global_u32("test_bits_end", bits_end)
+
+        # Fill report with 0xFF
+        report = bytearray([0xFF] * 64)
+
+        # Process the report
+        result = bpf.hid_bpf_device_event(report=bytes(report))
+        assert result == bytes(report)
+
+        # Check the extracted value
+        test_result = bpf.get_global_u32("test_extract_result")
+        assert test_result == expected, (
+            f"Extract bits[{bits_start}:{bits_end}] with max values: "
+            f"expected 0x{expected:X}, got 0x{test_result:X}"
+        )
 
 
 @pytest.mark.parametrize("source", ["0010-test-helpers"])

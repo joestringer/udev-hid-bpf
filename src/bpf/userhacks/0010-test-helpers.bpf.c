@@ -3,6 +3,7 @@
  *
  * Test BPF program for testing:
  * - HID report descriptor injection
+ * - extract_bits optimizations
  * - Iterator macros
  */
 
@@ -18,12 +19,34 @@ HID_BPF_CONFIG(
 /* to be filled by udev-hid-bpf */
 struct hid_rdesc_descriptor HID_REPORT_DESCRIPTOR;
 
+/* Test parameters (set by pytest before running test) */
+__u32 test_bits_start;
+__u32 test_bits_end;
+
 /* Test result storage */
+__u32 test_extract_result;
+
 __u32 test_feature_report_count;
 __u32 test_input_report_count;
 __u32 test_field_count;
 __u32 test_collection_count;
 __u32 test_max_collections_per_field;
+
+SEC(HID_BPF_DEVICE_EVENT)
+int BPF_PROG(test_extract_bits, struct hid_bpf_ctx *hctx)
+{
+	__u8 *data = hid_bpf_get_data(hctx, 0, 64);
+	struct hid_rdesc_field field;
+
+	if (!data)
+		return 0;
+
+	field.bits_start = (__u16)test_bits_start;
+	field.bits_end = (__u16)test_bits_end;
+	test_extract_result = extract_bits(data, 64, &field);
+
+	return 0;
+}
 
 SEC("syscall")
 int probe(struct hid_bpf_probe_args *ctx)
@@ -74,5 +97,9 @@ int probe(struct hid_bpf_probe_args *ctx)
 	ctx->retval = 0;
 	return 0;
 }
+
+HID_BPF_OPS(test_helpers) = {
+	.hid_device_event = (void *)test_extract_bits,
+};
 
 char _license[] SEC("license") = "GPL";
