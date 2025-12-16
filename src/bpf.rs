@@ -133,14 +133,19 @@ pub trait HidBPFLoader {
         Ok(object.load()?)
     }
 
-    fn probe(&self, object: &Object, device: &hidudev::HidUdev) -> Result<i32, BpfError> {
+    fn probe(
+        &self,
+        object: &Object,
+        device: &hidudev::HidUdev,
+        rdesc_bytes: &[u8],
+    ) -> Result<i32, BpfError> {
         match object
             .progs()
             .find(|prog| prog.name().to_str().unwrap() == OsStr::new("probe"))
         {
             None => Ok(0),
             Some(probe) => {
-                let args = hid_bpf_probe_args::from(device);
+                let args = hid_bpf_probe_args::from(device, rdesc_bytes);
                 run_syscall_prog_probe(&probe, args)
             }
         }
@@ -317,19 +322,15 @@ fn pin_hid_bpf_prog(link: i32, path: &str) -> Result<(), BpfError> {
 }
 
 impl hid_bpf_probe_args {
-    fn from(device: &hidudev::HidUdev) -> Self {
-        let syspath = device.syspath();
-        let rdesc = syspath + "/report_descriptor";
-
-        let mut buffer = fs::read(rdesc).unwrap();
-        let length = buffer.len();
-
-        buffer.resize(4096, 0);
+    fn from(device: &hidudev::HidUdev, rdesc_bytes: &[u8]) -> Self {
+        let mut rdesc = [0u8; 4096];
+        let length = rdesc_bytes.len().min(4096);
+        rdesc[..length].copy_from_slice(&rdesc_bytes[..length]);
 
         hid_bpf_probe_args {
             hid: device.id(),
             rdesc_size: length as u32,
-            rdesc: buffer.try_into().unwrap(),
+            rdesc,
             retval: -1,
         }
     }
@@ -545,6 +546,10 @@ impl HidBPF {
     ) -> Result<()> {
         log::debug!(target: "libbpf", "loading BPF object at {:?}", path.display());
 
+        let syspath = device.syspath();
+        let rdesc_path = syspath + "/report_descriptor";
+        let rdesc_bytes = fs::read(rdesc_path).context("couldn't read report descriptor")?;
+
         let mut obj_builder = libbpf_rs::ObjectBuilder::default();
         let open_object = obj_builder.open_file(path)?;
 
@@ -566,7 +571,7 @@ impl HidBPF {
          * this bpf.o file
          */
         loader
-            .probe(&object, device)
+            .probe(&object, device, &rdesc_bytes)
             .context(format!("probe() of {object_name} failed"))?;
 
         let bpffs_path = get_bpffs_path(&device.sysname(), object_name);
