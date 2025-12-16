@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Copyright (c) 2024 Red Hat
 
-from . import Bpf, HidProbeArgs, PrivateTestData
+from . import HidProbeArgs, PrivateTestData
 
 import binascii
 import logging
@@ -12,21 +12,6 @@ import pytest
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
-
-
-@pytest.fixture
-def bpf(source: str):
-    """
-    A fixture that allows parametrizing over a number of sources. Use with e.g.::
-
-        @pytest.mark.parametrize("source", ["0010-FR-TEC__Raptor-Mach-2"])
-        def test_something(bpf):
-            pass
-    """
-    assert source is not None
-    bpf = Bpf.load(source)
-    assert bpf is not None
-    yield bpf
 
 
 @pytest.mark.parametrize("source", ["0010-FR-TEC__Raptor-Mach-2"])
