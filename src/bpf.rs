@@ -61,6 +61,271 @@ impl From<libbpf_rs::Error> for BpfError {
     }
 }
 
+// C-compatible structures for passing parsed report descriptor to BPF
+// These must match the structs in hid_bpf_helpers.h
+
+const HID_MAX_COLLECTIONS: usize = 32;
+const HID_MAX_FIELDS: usize = 64;
+const HID_MAX_REPORTS: usize = 16;
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy)]
+enum HidRdescFieldType {
+    Variable = 0,
+    Array = 1,
+    Constant = 2,
+}
+
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HidRdescCollection {
+    pub usage_page: u16,
+    pub usage_id: u16,
+    pub collection_type: u8,
+}
+
+impl From<&hidreport::Collection> for HidRdescCollection {
+    fn from(collection: &hidreport::Collection) -> Self {
+        let usage = collection.usages().first();
+        Self {
+            usage_page: usage.map(|u| u16::from(&u.usage_page)).unwrap_or(0),
+            usage_id: usage.map(|u| u16::from(&u.usage_id)).unwrap_or(0),
+            collection_type: u8::from(collection.collection_type()),
+        }
+    }
+}
+
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+pub struct UsageRange {
+    pub usage_minimum: u16,
+    pub usage_maximum: u16,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union UsageIdUnion {
+    pub usage_id: u16,          // For Variable fields
+    pub anon_range: UsageRange, // For Array fields (anonymous struct in C)
+}
+
+impl std::fmt::Debug for UsageIdUnion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Safe to read usage_id since all union members start at same offset
+        f.debug_struct("UsageIdUnion")
+            .field("value", unsafe { &self.usage_id })
+            .finish()
+    }
+}
+
+impl Default for UsageIdUnion {
+    fn default() -> Self {
+        Self { usage_id: 0 }
+    }
+}
+
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HidRdescField {
+    pub field_type: u8,
+    pub num_collections: u8,
+    pub bits_start: u16,
+    pub bits_end: u16,
+    pub usage_page: u16,
+    pub anon_usage_id: UsageIdUnion,
+    pub logical_minimum: i32,
+    pub logical_maximum: i32,
+    /// Packed boolean flags matching C bitfield layout (HID Main Item attributes):
+    /// bit 0: is_relative - Data is relative to previous value
+    /// bit 1: wraps - Value wraps around (e.g., rotary encoder)
+    /// bit 2: is_nonlinear - Non-linear relationship between logical/physical
+    /// bit 3: has_no_preferred_state - No rest position (e.g., free-floating joystick)
+    /// bit 4: has_null_state - Can report null/no-data values
+    /// bit 5: is_volatile - Volatile (for Output/Feature items)
+    /// bit 6: is_buffered_bytes - Fixed-size byte stream vs bitfield
+    /// bit 7: reserved
+    pub flags: u8,
+    pub collections: [HidRdescCollection; HID_MAX_COLLECTIONS],
+}
+
+impl HidRdescField {
+    /// Pack HID Main Item attributes into u8 matching C bitfield layout
+    fn pack_flags(field: &impl hidreport::FieldAttributes) -> u8 {
+        ((field.is_relative() as u8) << 0)
+            | ((field.wraps() as u8) << 1)
+            | ((field.is_nonlinear() as u8) << 2)
+            | ((field.has_no_preferred_state() as u8) << 3)
+            | ((field.has_null_state() as u8) << 4)
+            | ((field.is_volatile().unwrap_or(false) as u8) << 5)
+            | ((field.is_buffered_bytes() as u8) << 6)
+    }
+}
+
+impl From<&hidreport::Field> for HidRdescField {
+    fn from(field: &hidreport::Field) -> Self {
+        use hidreport::Field;
+
+        let mut c_field = Self::default();
+
+        match field {
+            Field::Variable(vf) => {
+                c_field.field_type = HidRdescFieldType::Variable as u8;
+                c_field.bits_start = vf.bits.start as u16;
+                c_field.bits_end = vf.bits.end as u16;
+                c_field.usage_page = u16::from(&vf.usage.usage_page);
+                c_field.anon_usage_id = UsageIdUnion {
+                    usage_id: u16::from(&vf.usage.usage_id),
+                };
+                c_field.logical_minimum = i32::from(&vf.logical_minimum);
+                c_field.logical_maximum = i32::from(&vf.logical_maximum);
+                c_field.flags = Self::pack_flags(vf);
+
+                let num_collections = vf.collections.len().min(HID_MAX_COLLECTIONS);
+                c_field.num_collections = num_collections as u8;
+                for (i, collection) in vf.collections.iter().take(num_collections).enumerate() {
+                    c_field.collections[i] = collection.into();
+                }
+            }
+            Field::Array(af) => {
+                c_field.field_type = HidRdescFieldType::Array as u8;
+                c_field.bits_start = af.bits.start as u16;
+                c_field.bits_end = af.bits.end as u16;
+                c_field.usage_page = af
+                    .usages()
+                    .first()
+                    .map(|u| u16::from(&u.usage_page))
+                    .unwrap_or(0);
+                // For arrays: anon_usage_id holds the usage range (usage_minimum to usage_maximum)
+                c_field.anon_usage_id = UsageIdUnion {
+                    anon_range: UsageRange {
+                        usage_minimum: af
+                            .usages()
+                            .first()
+                            .map(|u| u16::from(&u.usage_id))
+                            .unwrap_or(0),
+                        usage_maximum: af
+                            .usages()
+                            .last()
+                            .map(|u| u16::from(&u.usage_id))
+                            .unwrap_or(0),
+                    },
+                };
+                c_field.logical_minimum = i32::from(&af.logical_minimum);
+                c_field.logical_maximum = i32::from(&af.logical_maximum);
+                c_field.flags = Self::pack_flags(af);
+
+                let num_collections = af.collections.len().min(HID_MAX_COLLECTIONS);
+                c_field.num_collections = num_collections as u8;
+                for (i, collection) in af.collections.iter().take(num_collections).enumerate() {
+                    c_field.collections[i] = collection.into();
+                }
+            }
+            Field::Constant(cf) => {
+                c_field.field_type = HidRdescFieldType::Constant as u8;
+                c_field.bits_start = cf.bits.start as u16;
+                c_field.bits_end = cf.bits.end as u16;
+                c_field.num_collections = 0;
+                // Constant fields don't implement FieldAttributes trait, flags remain 0
+            }
+        }
+
+        c_field
+    }
+}
+
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+pub struct HidRdescReport {
+    pub report_id: u8,
+    pub size_in_bits: u16,
+    pub num_fields: u8,
+    pub fields: [HidRdescField; HID_MAX_FIELDS],
+}
+
+impl Default for HidRdescReport {
+    fn default() -> Self {
+        Self {
+            report_id: 0,
+            size_in_bits: 0,
+            num_fields: 0,
+            fields: [HidRdescField::default(); HID_MAX_FIELDS],
+        }
+    }
+}
+
+impl<T: hidreport::Report> From<&T> for HidRdescReport {
+    fn from(report: &T) -> Self {
+        let mut c_report = Self::default();
+
+        if let Some(report_id) = report.report_id() {
+            c_report.report_id = u8::from(report_id);
+        } else {
+            c_report.report_id = 0;
+        }
+
+        c_report.size_in_bits = report.size_in_bits() as u16;
+
+        let num_fields = report.fields().len().min(HID_MAX_FIELDS);
+        c_report.num_fields = num_fields as u8;
+
+        for (i, field) in report.fields().iter().take(num_fields).enumerate() {
+            c_report.fields[i] = field.into();
+        }
+
+        c_report
+    }
+}
+
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+pub struct HidRdescDescriptor {
+    pub num_input_reports: u8,
+    pub num_output_reports: u8,
+    pub num_feature_reports: u8,
+    pub input_reports: [HidRdescReport; HID_MAX_REPORTS],
+    pub output_reports: [HidRdescReport; HID_MAX_REPORTS],
+    pub feature_reports: [HidRdescReport; HID_MAX_REPORTS],
+}
+
+impl Default for HidRdescDescriptor {
+    fn default() -> Self {
+        Self {
+            num_input_reports: 0,
+            num_output_reports: 0,
+            num_feature_reports: 0,
+            input_reports: [HidRdescReport::default(); HID_MAX_REPORTS],
+            output_reports: [HidRdescReport::default(); HID_MAX_REPORTS],
+            feature_reports: [HidRdescReport::default(); HID_MAX_REPORTS],
+        }
+    }
+}
+
+impl From<&hidreport::ReportDescriptor> for HidRdescDescriptor {
+    fn from(rdesc: &hidreport::ReportDescriptor) -> Self {
+        let mut c_rdesc = Self::default();
+
+        let num_input = rdesc.input_reports().len().min(HID_MAX_REPORTS);
+        c_rdesc.num_input_reports = num_input as u8;
+        for (i, report) in rdesc.input_reports().iter().take(num_input).enumerate() {
+            c_rdesc.input_reports[i] = report.into();
+        }
+
+        let num_output = rdesc.output_reports().len().min(HID_MAX_REPORTS);
+        c_rdesc.num_output_reports = num_output as u8;
+        for (i, report) in rdesc.output_reports().iter().take(num_output).enumerate() {
+            c_rdesc.output_reports[i] = report.into();
+        }
+
+        let num_feature = rdesc.feature_reports().len().min(HID_MAX_REPORTS);
+        c_rdesc.num_feature_reports = num_feature as u8;
+        for (i, report) in rdesc.feature_reports().iter().take(num_feature).enumerate() {
+            c_rdesc.feature_reports[i] = report.into();
+        }
+
+        c_rdesc
+    }
+}
+
 pub struct HidBPF {}
 
 /// Metadata for a variable extracted from BTF
@@ -78,6 +343,10 @@ pub struct BpfMetadata {
     pub udev_properties_bss: Vec<VariableMetadata>,
     /// UDEV properties found in .data section
     pub udev_properties_data: Vec<VariableMetadata>,
+    /// HID_REPORT_DESCRIPTOR in .bss section
+    pub report_descriptor_bss: Option<VariableMetadata>,
+    /// HID_REPORT_DESCRIPTOR in .data section
+    pub report_descriptor_data: Option<VariableMetadata>,
 }
 
 impl BpfMetadata {
@@ -85,7 +354,14 @@ impl BpfMetadata {
         Self {
             udev_properties_bss: get_udev_properties_metadata(".bss", btf),
             udev_properties_data: get_udev_properties_metadata(".data", btf),
+            report_descriptor_bss: get_report_descriptor_metadata(".bss", btf),
+            report_descriptor_data: get_report_descriptor_metadata(".data", btf),
         }
+    }
+
+    /// Check if the BPF program expects a HID_REPORT_DESCRIPTOR
+    pub fn has_report_descriptor(&self) -> bool {
+        self.report_descriptor_bss.is_some() || self.report_descriptor_data.is_some()
     }
 }
 
@@ -126,6 +402,19 @@ pub fn get_udev_properties_metadata(array_name: &str, btf: &Btf) -> Vec<Variable
     extract_variables_metadata(array_name, btf, |name| {
         name.strip_prefix("UDEV_PROP_").map(String::from)
     })
+}
+
+/// Helper function to find HID_REPORT_DESCRIPTOR in a BTF DataSec
+pub fn get_report_descriptor_metadata(array_name: &str, btf: &Btf) -> Option<VariableMetadata> {
+    extract_variables_metadata(array_name, btf, |name| {
+        if name == "HID_REPORT_DESCRIPTOR" {
+            Some(String::from(name))
+        } else {
+            None
+        }
+    })
+    .into_iter()
+    .next()
 }
 
 pub trait HidBPFLoader {
@@ -223,6 +512,86 @@ pub trait HidBPFLoader {
             ".data",
             &metadata.udev_properties_data,
             &udev_properties,
+        )?;
+        Ok(())
+    }
+
+    fn inject_report_descriptor_in_array(
+        &self,
+        object: &mut Object,
+        array_name: &str,
+        rdesc_metadata: Option<&VariableMetadata>,
+        rdesc_bytes: &[u8],
+    ) -> Result<(), BpfError> {
+        let Some(var) = rdesc_metadata else {
+            return Ok(());
+        };
+
+        if rdesc_bytes.len() > var.size {
+            log::warn!(target: "libbpf",
+                "HID_REPORT_DESCRIPTOR too small: {} bytes needed, {} bytes available", rdesc_bytes.len(), var.size);
+            return Ok(());
+        }
+
+        object
+            .maps_mut()
+            .filter(|m| m.name().to_str().unwrap().ends_with(array_name))
+            .for_each(|m| {
+                for k in m.keys() {
+                    let Some(mut data) = m.lookup(&k, libbpf_rs::MapFlags::ANY).unwrap() else {
+                        continue;
+                    };
+                    let end = var.offset + rdesc_bytes.len();
+                    data[var.offset..end].clone_from_slice(rdesc_bytes);
+
+                    log::debug!(target: "libbpf",
+                        "inserting HID_REPORT_DESCRIPTOR ({} bytes) in map {}", rdesc_bytes.len(), m.name().to_str().unwrap());
+
+                    let r = m.update(&k, &data, libbpf_rs::MapFlags::ANY);
+                    log::debug!(target: "libbpf",
+                        "updated map {}: {:?}", m.name().to_str().unwrap(), r);
+                }
+            });
+
+        Ok(())
+    }
+
+    fn inject_report_descriptor(
+        &self,
+        object: &mut Object,
+        metadata: &BpfMetadata,
+        rdesc_bytes: &[u8],
+    ) -> Result<(), BpfError> {
+        // Only parse the report descriptor if the BPF program needs it
+        if !metadata.has_report_descriptor() {
+            log::debug!(target: "libbpf", "BPF program doesn't use HID_REPORT_DESCRIPTOR, skipping parsing");
+            return Ok(());
+        }
+
+        let rdesc = hidreport::ReportDescriptor::try_from(rdesc_bytes).unwrap();
+
+        // Convert to C-compatible struct using From trait
+        let c_rdesc: HidRdescDescriptor = (&rdesc).into();
+
+        // Convert to byte slice
+        let c_rdesc_bytes = unsafe {
+            std::slice::from_raw_parts(
+                &c_rdesc as *const HidRdescDescriptor as *const u8,
+                std::mem::size_of::<HidRdescDescriptor>(),
+            )
+        };
+
+        self.inject_report_descriptor_in_array(
+            object,
+            ".bss",
+            metadata.report_descriptor_bss.as_ref(),
+            c_rdesc_bytes,
+        )?;
+        self.inject_report_descriptor_in_array(
+            object,
+            ".data",
+            metadata.report_descriptor_data.as_ref(),
+            c_rdesc_bytes,
         )?;
         Ok(())
     }
@@ -564,6 +933,12 @@ impl HidBPF {
         loader
             .inject_udev_properties(&mut object, &metadata, device, properties)
             .context(format!("couldn't set udev properties on {object_name}"))?;
+
+        loader
+            .inject_report_descriptor(&mut object, &metadata, &rdesc_bytes)
+            .context(format!(
+                "couldn't inject report descriptor on {object_name}"
+            ))?;
 
         /*
          * if there is a "probe" syscall, execute it and
