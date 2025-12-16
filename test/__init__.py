@@ -379,6 +379,32 @@ class Bpf:
         self.maps = maps
         self.btf = btf
 
+    def get_global_u32(self, name: str) -> int:
+        """
+        Get a global u32 variable from the loaded BPF program.
+
+        Example:
+            value = bpf.get_global_u32("test_extract_8bit_result")
+        """
+        try:
+            var = ctypes.c_uint32.in_dll(self.lib, name)
+            return var.value
+        except (ValueError, AttributeError) as e:
+            raise KeyError(f"Global variable '{name}' not found in BPF program") from e
+
+    def set_global_u32(self, name: str, value: int):
+        """
+        Set a global u32 variable in the loaded BPF program.
+
+        Example:
+            bpf.set_global_u32("test_variable", 42)
+        """
+        try:
+            var = ctypes.c_uint32.in_dll(self.lib, name)
+            var.value = value
+        except (ValueError, AttributeError) as e:
+            raise KeyError(f"Global variable '{name}' not found in BPF program") from e
+
     @classmethod
     def _load(cls, name: str) -> Self:
         # Our test setup guarantees this works, running things manually is
