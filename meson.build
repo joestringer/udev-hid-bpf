@@ -104,6 +104,7 @@ cargo_files = files(
     'src/bpf.rs',
     'src/hid_bpf_wrapper.h',
     'src/hidudev.rs',
+    'src/lib.rs',
     'src/main.rs',
     'src/meson.build',
     'src/modalias.rs',

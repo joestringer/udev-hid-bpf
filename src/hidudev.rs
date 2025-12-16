@@ -17,6 +17,26 @@ pub struct HidUdevProperty {
     pub value: String,
 }
 
+impl TryFrom<&str> for HidUdevProperty {
+    type Error = String;
+
+    fn try_from(s: &str) -> std::result::Result<Self, Self::Error> {
+        s.split_once('=')
+            .map(|(name, value)| HidUdevProperty {
+                name: name.into(),
+                value: value.into(),
+            })
+            .and_then(|prop| {
+                if prop.name.contains(char::is_whitespace) {
+                    None
+                } else {
+                    Some(prop)
+                }
+            })
+            .ok_or_else(|| "Invalid property format".to_string())
+    }
+}
+
 impl HidUdev {
     pub fn from_syspath(syspath: &std::path::Path) -> std::io::Result<Self> {
         let mut device = udev::Device::from_syspath(syspath)?;

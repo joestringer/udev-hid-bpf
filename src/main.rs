@@ -9,9 +9,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-pub mod bpf;
-pub mod hidudev;
-pub mod modalias;
+use udev_hid_bpf::{bpf, hidudev, modalias};
 
 static DEFAULT_BPF_DIRS: &str = env!("BPF_LOOKUP_DIRS");
 static BINDIR: &str = env!("MESON_BINDIR");
@@ -48,29 +46,10 @@ fn print_to_log(lvl: libbpf_rs::PrintLevel, msg: String) {
     }
 }
 
-impl TryFrom<&str> for hidudev::HidUdevProperty {
-    type Error = clap::Error;
-
-    fn try_from(s: &str) -> std::result::Result<Self, Self::Error> {
-        s.split_once('=')
-            .map(|(name, value)| hidudev::HidUdevProperty {
-                name: name.into(),
-                value: value.into(),
-            })
-            .and_then(|prop| {
-                if prop.name.contains(char::is_whitespace) {
-                    None
-                } else {
-                    Some(prop)
-                }
-            })
-            .ok_or(clap::Error::new(clap::error::ErrorKind::ValueValidation))
-    }
-}
-
 // For some reason we can't use PropertyTyple::try_from directly in #[arg(value_parser])
 fn tuple_parse(s: &str) -> std::result::Result<hidudev::HidUdevProperty, clap::error::Error> {
     hidudev::HidUdevProperty::try_from(s)
+        .map_err(|_| clap::Error::new(clap::error::ErrorKind::ValueValidation))
 }
 
 #[derive(Subcommand, Debug)]

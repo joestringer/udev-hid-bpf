@@ -19,6 +19,14 @@ stderrlog = "0.5"
 regex = "1.9.1"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.113"
+[lib]
+name = "udev_hid_bpf"
+path = "src/lib.rs"
+
+[[bin]]
+name = "udev-hid-bpf"
+path = "src/main.rs"
+
 
 [dev-dependencies]
 tempfile = "3.10.1"
