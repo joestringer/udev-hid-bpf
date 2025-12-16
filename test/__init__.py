@@ -87,6 +87,27 @@ class HidRawRequest:
 
 
 @dataclass
+class PrivateBpfNumIterator:
+    start: int
+    end: int
+    current_value: Optional[int] = dataclasses.field(default=None)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.current_value is None:
+            self.current_value = self.start
+        else:
+            self.current_value += 1
+
+        if self.current_value >= self.end:
+            raise StopIteration
+
+        return ctypes.c_int(self.current_value)
+
+
+@dataclass
 class PrivateTestData:
     bpf: "Bpf"
     current_ctx: HidBpfCtx = dataclasses.field(default_factory=HidBpfCtx)
@@ -95,6 +116,9 @@ class PrivateTestData:
     hw_requests: list[HidRawRequest] = dataclasses.field(default_factory=list)
     maps_data: dict[int, dict[int, ...]] = dataclasses.field(default_factory=dict)
     asyncs: dict[int, TestAsyncCb] = dataclasses.field(default_factory=dict)
+    iterators: dict[int, PrivateBpfNumIterator] = dataclasses.field(
+        default_factory=dict
+    )
 
 
 # see struct test_callbacks
@@ -264,6 +288,54 @@ class Callbacks(ctypes.Structure):
 
     def _bpf_wq_init(callbacks_p, wq_p, map_p, clock):
         return Callbacks._async_init(callbacks_p, wq_p, map_p, clock, BpfWq)
+
+    def _bpf_iter_num_new(callbacks_p, iter_p, start, end):
+        """
+        Initialize a number iterator.
+        iter_p points to a bpf_iter_num structure.
+        Returns 0 on success.
+        """
+        callbacks = callbacks_p.contents
+        pdata = callbacks.private_data
+
+        pdata.iterators[iter_p] = PrivateBpfNumIterator(start, end)
+        return 0
+
+    def _bpf_iter_num_next(callbacks_p, iter_p):
+        """
+        Get next value from number iterator.
+        Returns pointer to current value, or NULL if done.
+        """
+        callbacks = callbacks_p.contents
+        pdata = callbacks.private_data
+
+        if iter_p not in pdata.iterators:
+            return None
+
+        iter_state = pdata.iterators[iter_p]
+
+        # Get next value from generator
+        current = next(iter_state, None)
+        if current is None:
+            return None
+
+        callbacks.helpers_retval = ctypes.cast(
+            ctypes.byref(current), ctypes.c_void_p
+        ).value
+        return callbacks.helpers_retval
+
+    def _bpf_iter_num_destroy(callbacks_p, iter_p):
+        """
+        Clean up number iterator.
+        Returns 0 on success.
+        """
+        callbacks = callbacks_p.contents
+        pdata = callbacks.private_data
+
+        if iter_p in pdata.iterators:
+            del pdata.iterators[iter_p]
+
+        return 0
 
 
 @dataclass

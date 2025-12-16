@@ -33,6 +33,9 @@ static struct test_callbacks {
 	int (*async_start)(struct test_callbacks *callbacks, void *timer,
 			       int delay, int flags);
 	int (*bpf_wq_init)(struct test_callbacks *callbacks, void *wq, void *map, int clock);
+	int (*bpf_iter_num_new)(struct test_callbacks *callbacks, void *it, int start, int end);
+	void *(*bpf_iter_num_next)(struct test_callbacks *callbacks, void *it);
+	int (*bpf_iter_num_destroy)(struct test_callbacks *callbacks, void *it);
 	/* The data returned by hid_bpf_get_data */
 	uint8_t *hid_bpf_data;
 	size_t hid_bpf_data_sz;
@@ -168,4 +171,19 @@ int bpf_timer_start__hid_bpf(void *timer, int delay, int flags)
 	callbacks.time = current_time;
 
 	return 0;
+}
+
+int bpf_iter_num_new(void *it, int start, int end)
+{
+	return callbacks.bpf_iter_num_new(&callbacks, it, start, end);
+}
+
+int *bpf_iter_num_next(void *it)
+{
+	return (int *)callbacks.bpf_iter_num_next(&callbacks, it);
+}
+
+void bpf_iter_num_destroy(void *it)
+{
+	callbacks.bpf_iter_num_destroy(&callbacks, it);
 }
