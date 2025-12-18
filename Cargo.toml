@@ -20,6 +20,7 @@ regex = "1.9.1"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.113"
 hidreport = "0.6.0"
+base64 = "0.21"
 
 [lib]
 name = "udev_hid_bpf"
@@ -29,6 +30,9 @@ path = "src/lib.rs"
 name = "udev-hid-bpf"
 path = "src/main.rs"
 
+[[bin]]
+name = "hid-rdesc-to-c-struct"
+path = "src/bin/hid-rdesc-to-c-struct.rs"
 
 [dev-dependencies]
 tempfile = "3.10.1"

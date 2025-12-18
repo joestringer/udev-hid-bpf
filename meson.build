@@ -108,6 +108,7 @@ cargo_files = files(
     'src/main.rs',
     'src/meson.build',
     'src/modalias.rs',
+    'src/bin/hid-rdesc-to-c-struct.rs',
 )
 
 # Note: with the env set up the cp command only copies the
@@ -127,6 +128,20 @@ cargo_build = custom_target(
     cargo_options,
     '&&',
     'cp', rust_target / meson.project_name(), '@OUTPUT@',
+  ]
+)
+
+# Build hid-rdesc-to-c-struct tool (for test development only, not installed)
+hid_rdesc_tool = custom_target(
+  'hid-rdesc-to-c-struct',
+  build_by_default: false,
+  build_always_stale: true,
+  output: 'hid-rdesc-to-c-struct',
+  console: true,
+  install: false,
+  depends: cargo_build,
+  command: [
+    'cp', rust_target / 'hid-rdesc-to-c-struct', '@OUTPUT@',
   ]
 )
 

@@ -48,6 +48,8 @@ endforeach
 
 env = environment()
 env.set('LD_LIBRARY_PATH', meson.current_build_dir())
+# Add builddir to PATH so hid-rdesc-to-c-struct is available if built
+env.prepend('PATH', meson.project_build_root())
 pymod.find_installation(modules: ['pytest'])
 pytest_args = [
     '--verbose',
@@ -67,5 +69,6 @@ test('pytest',
     pytest,
     args: pytest_args,
     env: env,
+    depends: hid_rdesc_tool,
     workdir: meson.project_source_root()
 )
