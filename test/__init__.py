@@ -35,6 +35,32 @@ class HidDevice(ctypes.Structure):
 class HidProbeArgs(ctypes.Structure):
     cname = "hid_bpf_probe_args"
 
+    @property
+    def rdesc_bytes(self) -> bytes:
+        """
+        Get the report descriptor bytes.
+
+        Returns:
+            The report descriptor as bytes (up to rdesc_size)
+        """
+        return bytes(self.rdesc[: self.rdesc_size])
+
+    @rdesc_bytes.setter
+    def rdesc_bytes(self, rdesc_data: bytes | bytearray):
+        """
+        Set the report descriptor data and size.
+
+        Args:
+            rdesc_data: The report descriptor bytes to set
+
+        Example:
+            probe_args = HidProbeArgs()
+            probe_args.rdesc_bytes = bytearray([0x05, 0x01, 0x09, 0x02, ...])
+        """
+        for i, byte in enumerate(rdesc_data[: len(self.rdesc)]):
+            self.rdesc[i] = byte
+        self.rdesc_size = min(len(rdesc_data), len(self.rdesc))
+
 
 # see struct hid_bpf_ctx
 class HidBpfCtx(ctypes.Structure):
