@@ -1,0 +1,20 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2025 Red Hat, Inc
+ */
+
+// THIS FILE IS GENERATED, DO NOT EDIT
+{# Ignore the warning above, you're looking at the source file #}
+
+#pragma once
+
+/* ----- Generated Usage Pages and Usages ------ */
+{% for usage_page in usage_pages %}
+#define HidUsagePage_{{ usage_page.name.ljust(30)}} 0x{{'%02x' % usage_page.value}}
+{% endfor %}
+
+{% for usage_page in usage_pages %}
+{% for usage in usage_page.usages %}
+{% set name = usage_page.acronym + "_" + usage.name %}
+#define HidUsage_{{ name.ljust(40)}} 0x{{'%02x' % usage.value}}
+{% endfor %}
+{% endfor %}

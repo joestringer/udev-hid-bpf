@@ -7,6 +7,11 @@
 #     $ python3 ./tools/generate-hid-report-helpers.py \
 #                        --datafile data/HidUsageTables.json \
 #                        ./tools/hid_report_helpers.h.jinja > src/bpf/hid_report_helpers.h
+#
+# Or (for hid_usages.h):
+#     $ python3 ./tools/generate-hid-report-helpers.py \
+#                        --datafile data/HidUsageTables.json \
+#                        ./tools/hid_usages.h.jinja > src/bpf/hid_usages.h
 
 from pathlib import Path
 from dataclasses import dataclass
