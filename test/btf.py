@@ -430,9 +430,43 @@ class Btf:
 
             if anonymous:
                 cls._anonymous_ = anonymous
+
+            # Set fields and check size, auto-adjusting packing if needed
+            btf_size = m_type.size
+
+            # Create a temporary class to test size without packing
+            parent = ctypes.Structure if kind == BtfKind.STRUCT else ctypes.Union
+            test_cls = types.new_class("_test", (parent,))
+
+            for attr in filter(
+                lambda a: hasattr(cls, a),
+                ["_anonymous_", "_pack", "_layout_", "_fields_"],
+            ):
+                setattr(test_cls, attr, getattr(cls, attr))
+
+            test_cls._fields_ = fields
+
+            # Check if we need packing
+            needs_packing = ctypes.sizeof(test_cls) != btf_size
+
+            if needs_packing:
+                cls._pack_ = 1
+                # Use "ms" layout because kernel's __attribute__((packed))
+                # matches MSVC's tight packing behavior, not GCC's default ABI
+                cls._layout_ = "ms"
+
+            # Now set the actual fields
             cls._fields_ = fields
             cls.btftype = m_type
             cls.btfsize = property(lambda self: self.btftype.size)
+
+            if ctypes.sizeof(cls) != btf_size:
+                raise AssertionError(
+                    f"Size mismatch for struct {name}: "
+                    f"BTF reports {btf_size} bytes, "
+                    f"ctypes calculated {ctypes.sizeof(test_cls)} bytes (unpacked) "
+                    f"and {ctypes.sizeof(cls)} bytes (packed)."
+                )
 
             return cls
 
