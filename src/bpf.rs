@@ -2,10 +2,12 @@
 
 include!(concat!(env!("OUT_DIR"), "/attach.skel.rs"));
 
+use crate::btf_validation::BtfValidatedStruct;
 use crate::hidudev;
 use anyhow::{bail, Context, Result};
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libbpf_rs::{AsRawLibbpf, Btf, MapCore, Object, OpenObject, Program};
+use std::collections::HashSet;
 use std::convert::TryInto;
 use std::ffi::OsStr;
 use std::fmt::Display;
@@ -76,12 +78,14 @@ enum HidRdescFieldType {
     Constant = 2,
 }
 
-#[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct HidRdescCollection {
-    pub usage_page: u16,
-    pub usage_id: u16,
-    pub collection_type: u8,
+crate::btf_validated_struct! {
+    #[repr(C, packed)]
+    #[derive(Debug, Clone, Copy, Default)]
+    pub struct HidRdescCollection {
+        pub usage_page: u16,
+        pub usage_id: u16,
+        pub collection_type: u8,
+    }
 }
 
 impl From<&hidreport::Collection> for HidRdescCollection {
@@ -95,18 +99,23 @@ impl From<&hidreport::Collection> for HidRdescCollection {
     }
 }
 
-#[repr(C, packed)]
-#[derive(Debug, Clone, Copy)]
-pub struct UsageRange {
-    pub usage_minimum: u16,
-    pub usage_maximum: u16,
+// Anonymous struct within union for array fields
+crate::btf_validated_struct! {
+    #[repr(C, packed)]
+    #[derive(Debug, Clone, Copy)]
+    pub struct UsageRange {
+        pub usage_minimum: u16,
+        pub usage_maximum: u16,
+    }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union UsageIdUnion {
-    pub usage_id: u16,          // For Variable fields
-    pub anon_range: UsageRange, // For Array fields (anonymous struct in C)
+crate::btf_validated_union! {
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub union UsageIdUnion {
+        pub usage_id: u16,          // For Variable fields
+        pub anon_range: UsageRange, // For Array fields (anonymous struct in C)
+    }
 }
 
 impl std::fmt::Debug for UsageIdUnion {
@@ -124,28 +133,30 @@ impl Default for UsageIdUnion {
     }
 }
 
-#[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct HidRdescField {
-    pub field_type: u8,
-    pub num_collections: u8,
-    pub bits_start: u16,
-    pub bits_end: u16,
-    pub usage_page: u16,
-    pub anon_usage_id: UsageIdUnion,
-    pub logical_minimum: i32,
-    pub logical_maximum: i32,
-    /// Packed boolean flags matching C bitfield layout (HID Main Item attributes):
-    /// bit 0: is_relative - Data is relative to previous value
-    /// bit 1: wraps - Value wraps around (e.g., rotary encoder)
-    /// bit 2: is_nonlinear - Non-linear relationship between logical/physical
-    /// bit 3: has_no_preferred_state - No rest position (e.g., free-floating joystick)
-    /// bit 4: has_null_state - Can report null/no-data values
-    /// bit 5: is_volatile - Volatile (for Output/Feature items)
-    /// bit 6: is_buffered_bytes - Fixed-size byte stream vs bitfield
-    /// bit 7: reserved
-    pub flags: u8,
-    pub collections: [HidRdescCollection; HID_MAX_COLLECTIONS],
+crate::btf_validated_struct! {
+    #[repr(C, packed)]
+    #[derive(Debug, Clone, Copy, Default)]
+    pub struct HidRdescField {
+        pub field_type: u8,
+        pub num_collections: u8,
+        pub bits_start: u16,
+        pub bits_end: u16,
+        pub usage_page: u16,
+        pub anon_usage_id: UsageIdUnion,
+        pub logical_minimum: i32,
+        pub logical_maximum: i32,
+        /// Packed boolean flags matching C bitfield layout (HID Main Item attributes):
+        /// bit 0: is_relative - Data is relative to previous value
+        /// bit 1: wraps - Value wraps around (e.g., rotary encoder)
+        /// bit 2: is_nonlinear - Non-linear relationship between logical/physical
+        /// bit 3: has_no_preferred_state - No rest position (e.g., free-floating joystick)
+        /// bit 4: has_null_state - Can report null/no-data values
+        /// bit 5: is_volatile - Volatile (for Output/Feature items)
+        /// bit 6: is_buffered_bytes - Fixed-size byte stream vs bitfield
+        /// bit 7: reserved
+        pub flags: u8,
+        pub collections: [HidRdescCollection; HID_MAX_COLLECTIONS],
+    }
 }
 
 impl HidRdescField {
@@ -233,13 +244,15 @@ impl From<&hidreport::Field> for HidRdescField {
     }
 }
 
-#[repr(C, packed)]
-#[derive(Debug, Clone, Copy)]
-pub struct HidRdescReport {
-    pub report_id: u8,
-    pub size_in_bits: u16,
-    pub num_fields: u8,
-    pub fields: [HidRdescField; HID_MAX_FIELDS],
+crate::btf_validated_struct! {
+    #[repr(C, packed)]
+    #[derive(Debug, Clone, Copy)]
+    pub struct HidRdescReport {
+        pub report_id: u8,
+        pub size_in_bits: u16,
+        pub num_fields: u8,
+        pub fields: [HidRdescField; HID_MAX_FIELDS],
+    }
 }
 
 impl Default for HidRdescReport {
@@ -276,15 +289,17 @@ impl<T: hidreport::Report> From<&T> for HidRdescReport {
     }
 }
 
-#[repr(C, packed)]
-#[derive(Debug, Clone, Copy)]
-pub struct HidRdescDescriptor {
-    pub num_input_reports: u8,
-    pub num_output_reports: u8,
-    pub num_feature_reports: u8,
-    pub input_reports: [HidRdescReport; HID_MAX_REPORTS],
-    pub output_reports: [HidRdescReport; HID_MAX_REPORTS],
-    pub feature_reports: [HidRdescReport; HID_MAX_REPORTS],
+crate::btf_validated_struct! {
+    #[repr(C, packed)]
+    #[derive(Debug, Clone, Copy)]
+    pub struct HidRdescDescriptor {
+        pub num_input_reports: u8,
+        pub num_output_reports: u8,
+        pub num_feature_reports: u8,
+        pub input_reports: [HidRdescReport; HID_MAX_REPORTS],
+        pub output_reports: [HidRdescReport; HID_MAX_REPORTS],
+        pub feature_reports: [HidRdescReport; HID_MAX_REPORTS],
+    }
 }
 
 impl Default for HidRdescDescriptor {
@@ -559,6 +574,7 @@ pub trait HidBPFLoader {
     fn inject_report_descriptor(
         &self,
         object: &mut Object,
+        btf: &Btf,
         metadata: &BpfMetadata,
         rdesc_bytes: &[u8],
     ) -> Result<(), BpfError> {
@@ -566,6 +582,41 @@ pub trait HidBPFLoader {
         if !metadata.has_report_descriptor() {
             log::debug!(target: "libbpf", "BPF program doesn't use HID_REPORT_DESCRIPTOR, skipping parsing");
             return Ok(());
+        }
+
+        // Validate BTF struct layout once before injecting
+        // Check whichever section has the HID_REPORT_DESCRIPTOR
+        let (array_name, _) = if metadata.report_descriptor_bss.is_some() {
+            (".bss", metadata.report_descriptor_bss.as_ref().unwrap())
+        } else {
+            (".data", metadata.report_descriptor_data.as_ref().unwrap())
+        };
+
+        let btf_map = btf
+            .type_by_name::<libbpf_rs::btf::types::DataSec>(array_name)
+            .unwrap();
+        let v = btf_map
+            .iter()
+            .find(|v| {
+                let v_type = btf.type_by_id::<libbpf_rs::btf::BtfType>(v.ty).unwrap();
+                v_type
+                    .name()
+                    .map(|n| n.to_str().unwrap())
+                    .filter(|name| *name == "HID_REPORT_DESCRIPTOR")
+                    .is_some()
+            })
+            .unwrap();
+
+        let v_type = btf.type_by_id::<libbpf_rs::btf::BtfType>(v.ty).unwrap();
+
+        // Initialize cache for recursive validation
+        let mut validation_cache = HashSet::new();
+
+        if let Err(e) =
+            HidRdescDescriptor::validate_btf_layout_from_type(btf, v_type, &mut validation_cache)
+        {
+            log::error!(target: "libbpf", "BTF validation failed: {:?}", e);
+            return Err(e);
         }
 
         let rdesc = hidreport::ReportDescriptor::try_from(rdesc_bytes).unwrap();
@@ -935,7 +986,7 @@ impl HidBPF {
             .context(format!("couldn't set udev properties on {object_name}"))?;
 
         loader
-            .inject_report_descriptor(&mut object, &metadata, &rdesc_bytes)
+            .inject_report_descriptor(&mut object, &btf, &metadata, &rdesc_bytes)
             .context(format!(
                 "couldn't inject report descriptor on {object_name}"
             ))?;

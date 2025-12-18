@@ -102,6 +102,7 @@ cargo_files = files(
     'build.rs',
     'src/bpf/attach.bpf.c',
     'src/bpf.rs',
+    'src/btf_validation.rs',
     'src/hid_bpf_wrapper.h',
     'src/hidudev.rs',
     'src/lib.rs',
