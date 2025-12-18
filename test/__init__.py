@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from enum import IntEnum
 
+import base64
 import binascii
 import logging
 import ctypes
@@ -19,6 +20,7 @@ import pytest
 import random
 import dataclasses
 import errno
+import subprocess
 
 from .btf import Btf, Map
 
@@ -73,6 +75,10 @@ class BpfTimer(ctypes.Structure):
 
 class BpfWq(ctypes.Structure):
     cname = "bpf_wq"
+
+
+class HidRdescDescriptor(ctypes.Structure):
+    cname = "hid_rdesc_descriptor"
 
 
 class TestAsyncCb(ctypes.Structure):
@@ -431,6 +437,93 @@ class Bpf:
         except (ValueError, AttributeError) as e:
             raise KeyError(f"Global variable '{name}' not found in BPF program") from e
 
+    def clear_report_descriptor(self) -> bool:
+        """
+        Clear the HID_REPORT_DESCRIPTOR global variable by memsetting it to 0.
+
+        Returns True if clearing was performed, False if HID_REPORT_DESCRIPTOR doesn't exist.
+        """
+        # Check if HID_REPORT_DESCRIPTOR exists in the loaded library
+        try:
+            var_struct = HidRdescDescriptor.in_dll(self.lib, "HID_REPORT_DESCRIPTOR")
+        except (ValueError, AttributeError):
+            return False
+
+        try:
+            struct_size = ctypes.sizeof(HidRdescDescriptor)
+
+            ctypes.memset(ctypes.addressof(var_struct), 0, struct_size)
+
+            logger.warning(f"Cleared {struct_size} bytes of HID_REPORT_DESCRIPTOR")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to clear HID_REPORT_DESCRIPTOR: {e}")
+            return False
+
+    def inject_report_descriptor(self, rdesc_bytes: bytes) -> bool:
+        """
+        Inject parsed HID report descriptor into HID_REPORT_DESCRIPTOR global variable.
+
+        This method:
+        1. Checks if HID_REPORT_DESCRIPTOR exists in the loaded BPF program
+        2. If it exists, uses hid-rdesc-to-c-struct to convert rdesc_bytes to C-struct
+        3. Injects the C-struct data into the HID_REPORT_DESCRIPTOR global variable
+
+        Returns True if injection was performed, False if HID_REPORT_DESCRIPTOR doesn't exist.
+        """
+        try:
+            var_struct = HidRdescDescriptor.in_dll(self.lib, "HID_REPORT_DESCRIPTOR")
+        except (ValueError, AttributeError):
+            return False
+
+        # Convert rdesc_bytes to C-struct using the tool
+        try:
+            result = subprocess.run(
+                ["hid-rdesc-to-c-struct"],  # base64 is the default format
+                input=rdesc_bytes,
+                capture_output=True,
+                check=True,
+            )
+            base64_output = result.stdout.decode("utf-8").strip()
+
+            c_struct_bytes = base64.b64decode(base64_output)
+
+            # Get the actual size of the HID_REPORT_DESCRIPTOR struct.
+            # We already checked that it was matching the BTF so we know
+            # it is the actual binary size.
+            struct_size = ctypes.sizeof(HidRdescDescriptor)
+
+            if len(c_struct_bytes) > struct_size:
+                logger.error(
+                    f"Parsed descriptor size ({len(c_struct_bytes)} bytes) exceeds "
+                    f"HID_REPORT_DESCRIPTOR size ({struct_size} bytes)"
+                )
+                return False
+
+            ctypes.memmove(
+                ctypes.addressof(var_struct), c_struct_bytes, len(c_struct_bytes)
+            )
+
+            logger.debug(
+                f"Injected {len(c_struct_bytes)} bytes into HID_REPORT_DESCRIPTOR ({struct_size} bytes total)"
+            )
+            return True
+
+        except OSError as e:
+            logger.warning(
+                f"Failed to run hid-rdesc-to-c-struct: {e}, skipping HID_REPORT_DESCRIPTOR injection"
+            )
+            return False
+        except subprocess.CalledProcessError as e:
+            logger.error(
+                f"Failed to convert report descriptor: {e.stderr.decode('utf-8')}"
+            )
+            return False
+        except Exception as e:
+            logger.error(f"Failed to inject HID_REPORT_DESCRIPTOR: {e}")
+            return False
+
     @classmethod
     def _load(cls, name: str) -> Self:
         # Our test setup guarantees this works, running things manually is
@@ -457,6 +550,7 @@ class Bpf:
             HidBpfCtx,
             BpfTimer,
             BpfWq,
+            HidRdescDescriptor,
             TestAsyncCb,
             Callbacks,
         ]:
@@ -556,6 +650,7 @@ class Bpf:
 
         callbacks = Callbacks(private_data)
         self.set_callbacks(callbacks)
+
         # We copy so our caller's probe args are separate from
         # the ones we return after the BPF program modifies them.
         pa = HidProbeArgs()
@@ -563,6 +658,19 @@ class Bpf:
         p2 = ctypes.byref(pa)
         ctypes.memmove(p2, p1, ctypes.sizeof(HidProbeArgs))
         pa.hid = callbacks.private_data.id
+
+        # Extract rdesc bytes from probe_args and inject parsed descriptor if needed
+        rdesc_size = probe_args.rdesc_size
+        if rdesc_size > 0:
+            rdesc_bytes = bytes(probe_args.rdesc[:rdesc_size])
+            logger.info(f"Injecting {rdesc_size} byte report descriptor before probe")
+            injected = self.inject_report_descriptor(rdesc_bytes)
+            logger.info(f"Injection {'succeeded' if injected else 'skipped/failed'}")
+            if not injected:
+                self.clear_report_descriptor()
+        else:
+            self.clear_report_descriptor()
+
         rc = self.lib._probe(ctypes.byref(pa))
         if rc != 0:
             raise OSError(rc)
