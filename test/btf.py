@@ -70,6 +70,37 @@ class BtfType(ctypes.Structure):
         """#define BTF_INFO_KFLAG(info)    ((info) >> 31)"""
         return self.info >> 31
 
+    @property
+    def size(self):
+        """tells the size of the type it is describing
+        (used by INT, ENUM, STRUCT, UNION and ENUM64)."""
+        assert self.kind in (
+            BtfKind.INT,
+            BtfKind.ENUM,
+            BtfKind.STRUCT,
+            BtfKind.UNION,
+            BtfKind.ENUM64,
+        )
+        return self.u.size
+
+    @property
+    def type_id(self):
+        """reference to another type
+        (used by PTR, TYPEDEF, VOLATILE, CONST, RESTRICT,
+        FUNC, FUNC_PROTO, DECL_TAG and TYPE_TAG)."""
+        assert self.kind in (
+            BtfKind.PTR,
+            BtfKind.TYPEDEF,
+            BtfKind.VOLATILE,
+            BtfKind.CONST,
+            BtfKind.RESTRICT,
+            BtfKind.FUNC,
+            BtfKind.FUNC_PROTO,
+            BtfKind.DECL_TAG,
+            BtfKind.TYPE_TAG,
+        )
+        return self.u.type
+
 
 class BtfKind(IntEnum):
     UNKN = 0  # Unknown
@@ -400,6 +431,8 @@ class Btf:
             if anonymous:
                 cls._anonymous_ = anonymous
             cls._fields_ = fields
+            cls.btftype = m_type
+            cls.btfsize = property(lambda self: self.btftype.size)
 
             return cls
 
