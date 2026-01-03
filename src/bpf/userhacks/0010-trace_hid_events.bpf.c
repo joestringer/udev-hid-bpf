@@ -17,6 +17,7 @@
  *
  * Then watch for events:
  * sudo cat /sys/kernel/debug/tracing/trace_pipe
+ * (Ensure that tracing is enabled via echo 1 > /sys/kernel/debug/tracing/tracing_on)
  *
  * Once you are done:
  * sudo udev-hid-bpf remove /sys/bus/hid/devices/<DEVICE>

@@ -575,6 +575,7 @@ parse it, we can get reliable data from the device. For this we need
 
 .. note:: Run ``sudo cat /sys/kernel/debug/tracing/trace_pipe`` in another terminal
           to see any ``bpf_printk()`` calls.
+          (Ensure that tracing is enabled via ``echo 1 > /sys/kernel/debug/tracing/tracing_on``)
 
 Note that this is an abridged version to point out just the bits that are
 specific to this device. For the full source, see the

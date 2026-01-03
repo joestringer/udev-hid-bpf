@@ -94,6 +94,7 @@ And this file contains:
   {
       // bpf_printk works like printf but shows up in
       // sudo cat /sys/kernel/debug/tracing/trace_pipe
+      // ensure that tracing is enabled via echo 1 > /sys/kernel/debug/tracing/tracing_on
       bpf_printk("%s: fixing an rdesc", __func__);
 
       return 0;
@@ -104,6 +105,7 @@ And this file contains:
   {
       // bpf_printk works like printf but shows up in
       // sudo cat /sys/kernel/debug/tracing/trace_pipe
+      // ensure that tracing is enabled via echo 1 > /sys/kernel/debug/tracing/tracing_on
       bpf_printk("%s: handling an input report", __func__);
 
       return 0;
