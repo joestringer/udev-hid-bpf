@@ -130,7 +130,11 @@ enum Commands {
         bpfdir: Option<PathBuf>,
     },
     /// List available devices
-    ListDevices {},
+    ListDevices {
+        /// Only list devices that currently have BPF programs loaded
+        #[arg(long, default_value_t = false)]
+        with_bpfs: bool,
+    },
     /// Inspect a bpf.o file
     Inspect {
         /// One or more paths to a bpf.o file
@@ -282,7 +286,7 @@ fn cmd_list_bpf_programs(bpfdir: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_list_devices() -> Result<()> {
+fn cmd_list_devices(with_bpfs: bool) -> Result<()> {
     let re = Regex::new(r"hid:b([A-Z0-9]{4})g([A-Z0-9]{4})v0000([A-Z0-9]{4})p0000([A-Z0-9]{4})")
         .unwrap();
 
@@ -342,9 +346,37 @@ fn cmd_list_devices() -> Result<()> {
                 _ => group,
             };
 
+            let path = bpf::get_bpffs_path(&syspath.file_name().unwrap().to_string_lossy(), "");
+            let bpfs: Vec<PathBuf> = PathBuf::from(path)
+                .read_dir()
+                .and_then(|entries| Ok(entries))
+                .into_iter()
+                .flat_map(|entries| entries)
+                .filter_map(|dir| {
+                    let dir = dir.ok()?;
+                    if dir.file_type().ok()?.is_dir() {
+                        Some(dir.path())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if with_bpfs {
+                if bpfs.is_empty() {
+                    continue;
+                }
+            }
+
             println!("  -  syspath:      \"{}\"", syspath.to_str().unwrap());
             println!("     name:         \"{name}\"");
             println!("     device entry: \"HID_DEVICE({bus}, {group}, 0x{vid}, 0x{pid})\"");
+            if !bpfs.is_empty() {
+                println!("     bpfs:");
+                for bpf in bpfs {
+                    println!("       - {:?}", bpf.file_name().unwrap());
+                }
+            }
         }
     }
     Ok(())
@@ -755,7 +787,7 @@ fn udev_hid_bpf() -> Result<()> {
         }
         Commands::Remove { devpaths } => cmd_remove(&devpaths),
         Commands::ListBpfPrograms { bpfdir } => cmd_list_bpf_programs(bpfdir),
-        Commands::ListDevices {} => cmd_list_devices(),
+        Commands::ListDevices { with_bpfs } => cmd_list_devices(with_bpfs),
         Commands::Inspect { paths } => cmd_inspect(&paths),
         Commands::Install {
             path,
