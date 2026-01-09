@@ -381,11 +381,19 @@ struct InspectionMap {
 }
 
 #[derive(Serialize)]
+struct InspectionUdevProp {
+    name: String,
+    size: usize,
+    readonly: bool,
+}
+
+#[derive(Serialize)]
 struct InspectionData {
     filename: String,
     devices: Vec<InspectionDevice>,
     programs: Vec<InspectionProgram>,
     maps: Vec<InspectionMap>,
+    udev_properties: Vec<InspectionUdevProp>,
     #[serde(skip_serializing_if = "Option::is_none")]
     report_descriptor_size: Option<usize>,
 }
@@ -433,6 +441,27 @@ fn inspect(path: &PathBuf) -> Result<InspectionData> {
         })
         .collect();
 
+    let udev_properties: Vec<InspectionUdevProp> = bpf_metadata
+        .udev_properties_bss
+        .iter()
+        .chain(bpf_metadata.udev_properties_data.iter())
+        .map(|var| InspectionUdevProp {
+            name: var.name.clone(),
+            size: var.size,
+            readonly: true,
+        })
+        .chain(
+            bpf_metadata
+                .udev_property_maps
+                .iter()
+                .map(|map| InspectionUdevProp {
+                    name: map.name.clone(),
+                    size: map.size,
+                    readonly: false,
+                }),
+        )
+        .collect();
+
     // Check for HID_REPORT_DESCRIPTOR presence and size
     let report_descriptor_size = bpf_metadata
         .report_descriptor_bss
@@ -445,6 +474,7 @@ fn inspect(path: &PathBuf) -> Result<InspectionData> {
         devices,
         programs,
         maps,
+        udev_properties,
         report_descriptor_size,
     };
 
