@@ -496,9 +496,14 @@ SUBSYSTEM!="hid", GOTO="hid_bpf_end"
                 "remove" => String::from(""),
                 &_ => panic!("Unexpected action") // can't happen
             };
+            let cmd = match action {
+                "add" => String::from("IMPORT"),
+                "remove" => String::from("RUN"),
+                &_ => panic!("Unexpected action") // can't happen
+            };
             writeln!(
                 rulefile,
-                r#"ACTION=="{action}",{kernel_match}, RUN{{program}}+="{bindir}/udev-hid-bpf {action} $sys$devpath {bpf_o}""#
+                r#"ACTION=="{action}",{kernel_match}, {cmd}{{program}}+="{bindir}/udev-hid-bpf {action} $sys$devpath {bpf_o}""#
             )
             .unwrap();
         }

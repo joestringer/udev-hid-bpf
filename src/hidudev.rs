@@ -91,7 +91,8 @@ impl HidUdev {
     }
 
     pub fn hid_bpf_properties(&self) -> Vec<String> {
-        self.udev_device
+        let from_device: Vec<String> = self
+            .udev_device
             .properties()
             .map(|prop| {
                 let name = String::from(prop.name().to_str().unwrap_or_default());
@@ -100,6 +101,18 @@ impl HidUdev {
             })
             .filter(|(name, _)| name.starts_with("HID_BPF_"))
             .map(|(_, value)| value)
+            .collect();
+
+        if !from_device.is_empty() {
+            return from_device;
+        }
+
+        // Fall back to environment variables (for IMPORT{program} context)
+        // Only trust them if they look like valid BPF filenames
+        std::env::vars()
+            .filter(|(name, _)| name.starts_with("HID_BPF_"))
+            .map(|(_, value)| value)
+            .filter(|value| value.ends_with(".bpf.o"))
             .collect()
     }
 
