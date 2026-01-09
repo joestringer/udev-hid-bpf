@@ -386,6 +386,8 @@ struct InspectionData {
     devices: Vec<InspectionDevice>,
     programs: Vec<InspectionProgram>,
     maps: Vec<InspectionMap>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report_descriptor_size: Option<usize>,
 }
 
 fn inspect(path: &PathBuf) -> Result<InspectionData> {
@@ -393,6 +395,8 @@ fn inspect(path: &PathBuf) -> Result<InspectionData> {
 
     let btf = libbpf_rs::btf::Btf::from_path(path)
         .context(format!("Failed to read BPF from {:?}", path))?;
+    let bpf_metadata = bpf::BpfMetadata::from_btf(&btf);
+
     let metadata = modalias::Metadata::from_btf(&btf);
     let devices: Vec<InspectionDevice> = metadata
         .and_then(|metadata| {
@@ -413,6 +417,7 @@ fn inspect(path: &PathBuf) -> Result<InspectionData> {
 
     let mut obj_builder = libbpf_rs::ObjectBuilder::default();
     let object = obj_builder.open_file(path.clone()).unwrap();
+
     let programs: Vec<InspectionProgram> = object
         .progs()
         .map(|prog| InspectionProgram {
@@ -428,11 +433,19 @@ fn inspect(path: &PathBuf) -> Result<InspectionData> {
         })
         .collect();
 
+    // Check for HID_REPORT_DESCRIPTOR presence and size
+    let report_descriptor_size = bpf_metadata
+        .report_descriptor_bss
+        .as_ref()
+        .or(bpf_metadata.report_descriptor_data.as_ref())
+        .map(|var| var.size);
+
     let data = InspectionData {
         filename: String::from(path.file_name().unwrap().to_string_lossy()),
         devices,
         programs,
         maps,
+        report_descriptor_size,
     };
 
     Ok(data)
