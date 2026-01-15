@@ -351,13 +351,22 @@ pub struct VariableMetadata {
     pub size: usize,
 }
 
-/// Cached BTF metadata extracted from .bss and .data sections
+/// Metadata for a udev property map
+#[derive(Debug, Clone)]
+pub struct UdevPropertyMap {
+    pub name: String,
+    pub size: usize,
+}
+
+/// Cached BTF metadata extracted from .maps, .bss and .data sections
 #[derive(Debug, Default)]
 pub struct BpfMetadata {
-    /// UDEV properties found in .bss section
+    /// udev properties found in .bss section
     pub udev_properties_bss: Vec<VariableMetadata>,
-    /// UDEV properties found in .data section
+    /// udev properties found in .data section
     pub udev_properties_data: Vec<VariableMetadata>,
+    /// udev properties exported via EXPORT_UDEV_PROP macro (stored in maps)
+    pub udev_property_maps: Vec<UdevPropertyMap>,
     /// HID_REPORT_DESCRIPTOR in .bss section
     pub report_descriptor_bss: Option<VariableMetadata>,
     /// HID_REPORT_DESCRIPTOR in .data section
@@ -369,6 +378,7 @@ impl BpfMetadata {
         Self {
             udev_properties_bss: get_udev_properties_metadata(".bss", btf),
             udev_properties_data: get_udev_properties_metadata(".data", btf),
+            udev_property_maps: get_udev_property_maps_metadata(btf),
             report_descriptor_bss: get_report_descriptor_metadata(".bss", btf),
             report_descriptor_data: get_report_descriptor_metadata(".data", btf),
         }
@@ -430,6 +440,80 @@ pub fn get_report_descriptor_metadata(array_name: &str, btf: &Btf) -> Option<Var
     })
     .into_iter()
     .next()
+}
+
+/// Extract udev property maps metadata directly from BTF
+/// This works without needing to load or open the BPF object
+fn get_udev_property_maps_metadata(btf: &Btf) -> Vec<UdevPropertyMap> {
+    let Some(btf_maps) = btf.type_by_name::<libbpf_rs::btf::types::DataSec>(".maps") else {
+        return Vec::new();
+    };
+
+    btf_maps
+        .iter()
+        .filter_map(|var_info| {
+            // Get the variable type to check its name
+            let var_type = btf.type_by_id::<libbpf_rs::btf::BtfType>(var_info.ty)?;
+            let map_name = var_type.name()?.to_str()?;
+
+            // Extract property name from UDEV_PROP_* map name
+            let prop_name = map_name.strip_prefix("UDEV_PROP_")?;
+
+            Some(UdevPropertyMap {
+                name: prop_name.to_string(),
+                size: var_info.size,
+            })
+        })
+        .collect()
+}
+
+/// Read a udev property value from a map
+/// Returns None if the map has no data, Some(value) otherwise
+pub fn read_udev_property_map(map: &impl MapCore) -> Result<Option<String>, BpfError> {
+    let key = 0u32.to_ne_bytes();
+    let Some(data) = map.lookup(&key, libbpf_rs::MapFlags::ANY)? else {
+        return Ok(None);
+    };
+
+    let null_pos = data.iter().position(|&b| b == 0).unwrap_or(data.len());
+    if null_pos == 0 {
+        return Ok(None);
+    }
+    let value_str = match std::str::from_utf8(&data[..null_pos]) {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            log::warn!("udev property map contains invalid UTF-8: {}", e);
+            return Ok(None);
+        }
+    };
+
+    Ok(Some(value_str))
+}
+
+/// Read udev property values from a BPF object's maps
+/// Returns a vec of (name, value) tuples for properties that have data
+pub fn read_udev_property_maps(
+    object: &Object,
+    property_maps: &[UdevPropertyMap],
+) -> Result<Vec<(String, String)>, BpfError> {
+    let mut result = Vec::new();
+
+    for prop_map in property_maps {
+        let map_name = format!("UDEV_PROP_{}", prop_map.name);
+
+        let Some(map) = object
+            .maps()
+            .find(|m| m.name().to_str().map(|n| n == map_name).unwrap_or(false))
+        else {
+            continue;
+        };
+
+        if let Some(value) = read_udev_property_map(&map)? {
+            result.push((prop_map.name.clone(), value));
+        }
+    }
+
+    Ok(result)
 }
 
 pub trait HidBPFLoader {
@@ -1009,6 +1093,12 @@ impl HidBPF {
             let _ = std::fs::remove_dir_all(bpffs_path);
             bail!(e);
         };
+
+        let udev_props = read_udev_property_maps(&object, &metadata.udev_property_maps)
+            .context(format!("read_udev_property_maps() of {object_name} failed"))?;
+        for (name, value) in &udev_props {
+            println!("{}={}", name, value);
+        }
 
         Ok(())
     }
