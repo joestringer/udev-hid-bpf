@@ -586,6 +586,53 @@ pub trait HidBPFLoader {
         Ok(())
     }
 
+    fn inject_udev_properties_to_maps(
+        &self,
+        object: &mut Object,
+        property_maps: &[UdevPropertyMap],
+        udev_properties: &[hidudev::HidUdevProperty],
+    ) -> Result<(), BpfError> {
+        if property_maps.is_empty() {
+            return Ok(());
+        }
+
+        for prop_map in property_maps {
+            // Find the matching udev property
+            let Some(prop) = udev_properties.iter().find(|p| p.name == prop_map.name) else {
+                continue;
+            };
+
+            let map_name = format!("UDEV_PROP_{}", prop_map.name);
+            let Some(map) = object
+                .maps_mut()
+                .find(|m| m.name().to_str().map(|n| n == map_name).unwrap_or(false))
+            else {
+                continue;
+            };
+
+            let value_size = map.value_size() as usize;
+            let mut data = vec![0u8; value_size];
+            let buf = prop.value.as_bytes();
+
+            if buf.len() < value_size {
+                data[..buf.len()].copy_from_slice(buf);
+
+                // Update the map (key is always 0 for single-entry array maps)
+                let key = 0u32.to_ne_bytes();
+                map.update(&key, &data, libbpf_rs::MapFlags::ANY)?;
+
+                log::debug!(target: "libbpf",
+                    "inserted {}={} in map {}", prop.name, prop.value, map_name);
+            } else {
+                log::warn!(target: "libbpf",
+                    "property {} value too large ({} bytes) for map size {} bytes (need room for null terminator)",
+                    prop.name, buf.len(), value_size);
+            }
+        }
+
+        Ok(())
+    }
+
     fn inject_udev_properties(
         &self,
         object: &mut Object,
@@ -612,6 +659,13 @@ pub trait HidBPFLoader {
             &metadata.udev_properties_data,
             &udev_properties,
         )?;
+
+        self.inject_udev_properties_to_maps(
+            object,
+            &metadata.udev_property_maps,
+            &udev_properties,
+        )?;
+
         Ok(())
     }
 
