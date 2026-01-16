@@ -63,6 +63,71 @@ impl From<libbpf_rs::Error> for BpfError {
 
 pub struct HidBPF {}
 
+/// Metadata for a variable extracted from BTF
+#[derive(Debug, Clone)]
+pub struct VariableMetadata {
+    pub name: String,
+    pub offset: usize,
+    pub size: usize,
+}
+
+/// Cached BTF metadata extracted from .bss and .data sections
+#[derive(Debug, Default)]
+pub struct BpfMetadata {
+    /// UDEV properties found in .bss section
+    pub udev_properties_bss: Vec<VariableMetadata>,
+    /// UDEV properties found in .data section
+    pub udev_properties_data: Vec<VariableMetadata>,
+}
+
+impl BpfMetadata {
+    pub fn from_btf(btf: &Btf) -> Self {
+        Self {
+            udev_properties_bss: get_udev_properties_metadata(".bss", btf),
+            udev_properties_data: get_udev_properties_metadata(".data", btf),
+        }
+    }
+}
+
+/// Generic helper function to extract variable metadata from a BTF DataSec
+/// Returns a vector of VariableMetadata for variables matching the predicate
+fn extract_variables_metadata<F>(array_name: &str, btf: &Btf, predicate: F) -> Vec<VariableMetadata>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let Some(btf_map) = btf.type_by_name::<libbpf_rs::btf::types::DataSec>(array_name) else {
+        return Vec::new();
+    };
+
+    btf_map
+        .iter()
+        .filter_map(|v| {
+            let v_type = btf.type_by_id::<libbpf_rs::btf::BtfType>(v.ty).unwrap();
+
+            v_type
+                .name()
+                .and_then(|n| n.to_str())
+                .and_then(|name| predicate(name))
+                .map(|name| {
+                    let offset: usize = v.offset.try_into().unwrap();
+                    VariableMetadata {
+                        name,
+                        offset,
+                        size: v.size,
+                    }
+                })
+        })
+        .collect()
+}
+
+/// Helper function to extract UDEV property metadata from a BTF DataSec
+/// Returns a vector of VariableMetadata for each UDEV_PROP_* variable found
+pub fn get_udev_properties_metadata(array_name: &str, btf: &Btf) -> Vec<VariableMetadata> {
+    extract_variables_metadata(array_name, btf, |name| {
+        name.strip_prefix("UDEV_PROP_").map(String::from)
+    })
+}
+
 pub trait HidBPFLoader {
     fn load(&self, object: OpenObject, _device: &hidudev::HidUdev) -> Result<Object, BpfError> {
         Ok(object.load()?)
@@ -85,55 +150,45 @@ pub trait HidBPFLoader {
         &self,
         object: &mut Object,
         array_name: &str,
-        btf: &Btf,
+        properties_metadata: &[VariableMetadata],
         udev_properties: &[hidudev::HidUdevProperty],
     ) -> Result<(), BpfError> {
-        let Some(btf_map) = btf.type_by_name::<libbpf_rs::btf::types::DataSec>(array_name) else {
+        if properties_metadata.is_empty() {
             return Ok(());
-        };
+        }
 
         object
             .maps_mut()
             .filter(|m| m.name().to_str().unwrap().ends_with(array_name))
             .for_each(|m| {
-                m.keys().for_each(|k| {
-                    if let Some(mut data) = m.lookup(&k, libbpf_rs::MapFlags::ANY).unwrap() {
-                        if btf_map.iter().fold(false, |acc, v| {
-                            let v_type = btf.type_by_id::<libbpf_rs::btf::BtfType>(v.ty).unwrap();
+                for k in m.keys() {
+                    let Some(mut data) = m.lookup(&k, libbpf_rs::MapFlags::ANY).unwrap() else {
+                        continue;
+                    };
 
-                            v_type
-                                .name()
-                                .map(|n| n.to_str().unwrap())
-                                .filter(|name| name.starts_with("UDEV_PROP_"))
-                                .map(|name| &name["UDEV_PROP_".len()..])
-                                .and_then(|pname| {
-                                    udev_properties.iter().find(|prop| prop.name == pname)
-                                })
-                                .map_or(false, |prop| {
-                                    let buf = prop.value.as_bytes();
+                    let mut updated = false;
 
-                                    let size_ok = buf.len() < v.size;
+                    for var in properties_metadata {
+                        if let Some(prop) = udev_properties.iter().find(|p| p.name == var.name) {
+                            let buf = prop.value.as_bytes();
 
-                                    if size_ok {
-                                        let start: usize = v.offset.try_into().unwrap();
-                                        let end = start + buf.len();
+                            if buf.len() < var.size {
+                                let end = var.offset + buf.len();
+                                data[var.offset..end].clone_from_slice(buf);
 
-                                        data[start..end].clone_from_slice(buf);
-
-                                        log::debug!(target: "libbpf",
-                                                   "inserting {}={} in map {}", prop.name, prop.value, m.name().to_str().unwrap());
-                                    }
-
-                                    size_ok
-                                })
-                                || acc
-                        }) {
-                            let r = m.update(&k, &data, libbpf_rs::MapFlags::ANY);
-                            log::debug!(target: "libbpf",
-                                        "updated map {}: {:?}", m.name().to_str().unwrap(), r);
+                                log::debug!(target: "libbpf",
+                                            "inserting {}={} in map {}", prop.name, prop.value, m.name().to_str().unwrap());
+                                updated = true;
+                            }
                         }
                     }
-                });
+
+                    if updated {
+                        let r = m.update(&k, &data, libbpf_rs::MapFlags::ANY);
+                        log::debug!(target: "libbpf",
+                                    "updated map {}: {:?}", m.name().to_str().unwrap(), r);
+                    }
+                }
             });
         Ok(())
     }
@@ -141,11 +196,10 @@ pub trait HidBPFLoader {
     fn inject_udev_properties(
         &self,
         object: &mut Object,
+        metadata: &BpfMetadata,
         device: &hidudev::HidUdev,
         extra_props: &[hidudev::HidUdevProperty],
     ) -> Result<(), BpfError> {
-        let btf = Btf::from_bpf_object(unsafe { object.as_libbpf_object().as_ref() })?.unwrap();
-
         let udev_properties: Vec<hidudev::HidUdevProperty> = device
             .udev_properties()
             .into_iter()
@@ -153,8 +207,18 @@ pub trait HidBPFLoader {
             .chain(extra_props.iter().map(hidudev::HidUdevProperty::from))
             .collect();
 
-        self.inject_udev_properties_in_array(object, ".bss", &btf, &udev_properties)?;
-        self.inject_udev_properties_in_array(object, ".data", &btf, &udev_properties)?;
+        self.inject_udev_properties_in_array(
+            object,
+            ".bss",
+            &metadata.udev_properties_bss,
+            &udev_properties,
+        )?;
+        self.inject_udev_properties_in_array(
+            object,
+            ".data",
+            &metadata.udev_properties_data,
+            &udev_properties,
+        )?;
         Ok(())
     }
 
@@ -489,8 +553,11 @@ impl HidBPF {
         let mut object = loader.load(open_object, device)?;
         let object_name = path.file_stem().unwrap().to_str().unwrap();
 
+        let btf = Btf::from_bpf_object(unsafe { object.as_libbpf_object().as_ref() })?.unwrap();
+        let metadata = BpfMetadata::from_btf(&btf);
+
         loader
-            .inject_udev_properties(&mut object, device, properties)
+            .inject_udev_properties(&mut object, &metadata, device, properties)
             .context(format!("couldn't set udev properties on {object_name}"))?;
 
         /*
