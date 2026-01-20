@@ -119,6 +119,15 @@ enum Commands {
         /// One or more paths to a bpf.o file
         paths: Vec<PathBuf>,
     },
+    /// List currently loaded BPF programs from /sys/fs/bpf/hid
+    ListLoaded {
+        /// Filter by syspath (e.g., /sys/bus/hid/devices/0003:056A:0374.0008 or 0003:056A:0374.0008)
+        #[arg(long)]
+        syspath: Option<String>,
+        /// Output format: json (default) or udev
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
     /// Install one bpf.o file.
     ///
     /// The file is installed into /etc/udev-hid-bpf/ with a corresponding udev rule
@@ -398,6 +407,47 @@ struct InspectionData {
     report_descriptor_size: Option<usize>,
 }
 
+#[derive(Serialize)]
+struct LoadedMap {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<String>,
+}
+
+#[derive(Serialize)]
+struct LoadedProgram {
+    name: String,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    callbacks: Vec<ProgramCallback>,
+}
+
+#[derive(Serialize, Clone)]
+struct ProgramCallback {
+    prog_name: String,
+}
+
+#[derive(Serialize)]
+struct LoadedBpfObject {
+    name: String,
+    programs: Vec<LoadedProgram>,
+    maps: Vec<LoadedMap>,
+}
+
+#[derive(Serialize)]
+struct LoadedDevice {
+    sysname: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    syspath: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    detached: bool,
+    bpf_objects: Vec<LoadedBpfObject>,
+}
+
+#[derive(Serialize)]
+struct LoadedBpfData {
+    devices: Vec<LoadedDevice>,
+}
+
 fn inspect(path: &PathBuf) -> Result<InspectionData> {
     ensure!(path.exists(), "Invalid bpf.o path {path:?}");
 
@@ -488,6 +538,165 @@ fn cmd_inspect(paths: &[PathBuf]) -> Result<()> {
         .collect::<Result<Vec<InspectionData>>>()?;
     let json = serde_json::to_string_pretty(&objects).context("Failed to parse json")?;
     println!("{}", json);
+    Ok(())
+}
+
+fn cmd_list_loaded(filter_syspath: Option<String>, format: &str) -> Result<()> {
+    use std::fs;
+    use std::path::Path;
+
+    if format != "json" && format != "udev" {
+        bail!("Unknown format '{}', expected 'json' or 'udev'", format);
+    }
+
+    let bpffs_root = Path::new(bpf::BPFFS_ROOT);
+
+    if !bpffs_root.exists() {
+        // No BPF programs loaded
+        if format == "json" {
+            let data = LoadedBpfData {
+                devices: Vec::new(),
+            };
+            let json = serde_json::to_string_pretty(&data)?;
+            println!("{}", json);
+        }
+        return Ok(());
+    }
+
+    // Extract sysname from syspath and convert to bpffs format if filter provided
+    // Syspath can be either "/sys/bus/hid/devices/0003:056A:0374.0008" or just "0003:056A:0374.0008"
+    let filter_bpffs_name = filter_syspath.as_ref().map(|syspath| {
+        let path = std::path::Path::new(syspath);
+
+        // Try to use HidUdev::from_syspath which handles parent device lookup
+        match hidudev::HidUdev::from_syspath(path) {
+            Ok(dev) => {
+                let sysname = dev.sysname();
+                bpf::sysname_to_bpffs(&sysname)
+            }
+            Err(_) => {
+                // If path doesn't exist in sysfs, assume it's just a sysname
+                let sysname = path
+                    .file_name()
+                    .unwrap_or_else(|| std::ffi::OsStr::new(syspath))
+                    .to_string_lossy();
+                bpf::sysname_to_bpffs(&sysname)
+            }
+        }
+    });
+
+    // Fast path for udev format - only read UDEV_PROP_* maps
+    if format == "udev" {
+        let properties = bpf::collect_udev_properties(bpffs_root, filter_bpffs_name.as_ref())?;
+        for (key, value) in &properties {
+            println!("{}={}", key, value);
+        }
+        return Ok(());
+    }
+
+    // Build a map of prog_id -> prog_name for efficient lookup (only needed for JSON)
+    let prog_names = bpf::build_prog_name_map();
+
+    let mut devices = Vec::new();
+
+    // Iterate over device directories
+    for device_entry in fs::read_dir(bpffs_root)? {
+        let device_entry = device_entry?;
+        let device_path = device_entry.path();
+
+        if !device_path.is_dir() {
+            continue;
+        }
+
+        let bpffs_name = device_entry.file_name().to_string_lossy().to_string();
+
+        // Apply sysname filter if provided
+        if let Some(ref filter) = filter_bpffs_name {
+            if &bpffs_name != filter {
+                continue;
+            }
+        }
+
+        // Convert bpffs name to actual HID sysname
+        let sysname = bpf::bpffs_to_sysname(&bpffs_name);
+
+        // Check if device still exists and get its sysfs path
+        let syspath = bpf::get_hid_sysfs_path(&sysname);
+        let detached = syspath.is_none();
+
+        let mut bpf_objects = Vec::new();
+
+        // Iterate over BPF object directories within each device
+        for object_entry in fs::read_dir(&device_path)? {
+            let object_entry = object_entry?;
+            let object_path = object_entry.path();
+
+            if !object_path.is_dir() {
+                continue;
+            }
+
+            let object_name = object_entry.file_name().to_string_lossy().to_string();
+            let mut programs = Vec::new();
+            let mut maps = Vec::new();
+
+            // Iterate over entries within each BPF object
+            // These can be either struct_ops (programs) or regular maps
+            for entry in fs::read_dir(&object_path)? {
+                let entry = entry?;
+                let entry_path = entry.path();
+
+                if entry_path.is_dir() {
+                    continue;
+                }
+
+                let entry_name = entry.file_name().to_string_lossy().to_string();
+
+                // Check if this is a struct_ops link
+                if let Some(map_id) = bpf::get_struct_ops_map_id(&entry_path) {
+                    // This is a struct_ops link (program)
+                    let callbacks = bpf::get_struct_ops_callbacks(map_id, &prog_names)
+                        .into_iter()
+                        .map(|(prog_name, _)| ProgramCallback { prog_name })
+                        .collect();
+                    programs.push(LoadedProgram {
+                        name: entry_name,
+                        callbacks,
+                    });
+                } else if let Ok(map_handle) = libbpf_rs::MapHandle::from_pinned_path(&entry_path) {
+                    // This is a map
+                    let value = if entry_name.starts_with("UDEV_PROP_") {
+                        bpf::read_udev_property_map(&map_handle).ok().flatten()
+                    } else {
+                        None
+                    };
+
+                    maps.push(LoadedMap {
+                        name: entry_name,
+                        value,
+                    });
+                }
+            }
+
+            bpf_objects.push(LoadedBpfObject {
+                name: object_name,
+                programs,
+                maps,
+            });
+        }
+
+        devices.push(LoadedDevice {
+            sysname,
+            syspath,
+            detached,
+            bpf_objects,
+        });
+    }
+
+    // Output in JSON format
+    let data = LoadedBpfData { devices };
+    let json = serde_json::to_string_pretty(&data)?;
+    println!("{}", json);
+
     Ok(())
 }
 
@@ -816,6 +1025,7 @@ fn udev_hid_bpf() -> Result<()> {
         Commands::ListBpfPrograms { bpfdir } => cmd_list_bpf_programs(bpfdir),
         Commands::ListDevices { with_bpfs } => cmd_list_devices(with_bpfs),
         Commands::Inspect { paths } => cmd_inspect(&paths),
+        Commands::ListLoaded { syspath, format } => cmd_list_loaded(syspath, &format),
         Commands::Install {
             path,
             prefix,

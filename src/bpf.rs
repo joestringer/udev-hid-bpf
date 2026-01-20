@@ -516,6 +516,66 @@ pub fn read_udev_property_maps(
     Ok(result)
 }
 
+/// Collect udev properties from pinned BPF maps in bpffs
+/// Returns a vec of (key, value) tuples for all UDEV_PROP_* maps found
+pub fn collect_udev_properties(
+    bpffs_root: &std::path::Path,
+    filter_bpffs_name: Option<&String>,
+) -> Result<Vec<(String, String)>> {
+    let mut properties = Vec::new();
+
+    // Iterate over device directories
+    for device_entry in fs::read_dir(bpffs_root)? {
+        let device_entry = device_entry?;
+        let device_path = device_entry.path();
+
+        if !device_path.is_dir() {
+            continue;
+        }
+
+        let bpffs_name = device_entry.file_name().to_string_lossy().to_string();
+
+        // Apply sysname filter if provided
+        if let Some(ref filter) = filter_bpffs_name {
+            if &bpffs_name != *filter {
+                continue;
+            }
+        }
+
+        // Iterate over BPF object directories
+        for object_entry in fs::read_dir(&device_path)? {
+            let object_entry = object_entry?;
+            let object_path = object_entry.path();
+
+            if !object_path.is_dir() {
+                continue;
+            }
+
+            // Iterate over entries within each BPF object
+            for entry in fs::read_dir(&object_path)? {
+                let entry = entry?;
+                let entry_path = entry.path();
+
+                if entry_path.is_dir() {
+                    continue;
+                }
+
+                let entry_name = entry.file_name().to_string_lossy().to_string();
+
+                if let Some(key) = entry_name.strip_prefix("UDEV_PROP_") {
+                    if let Ok(map_handle) = libbpf_rs::MapHandle::from_pinned_path(&entry_path) {
+                        if let Some(value) = read_udev_property_map(&map_handle).ok().flatten() {
+                            properties.push((key.to_string(), value));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(properties)
+}
+
 pub trait HidBPFLoader {
     fn load(&self, object: OpenObject, _device: &hidudev::HidUdev) -> Result<Object, BpfError> {
         Ok(object.load()?)
@@ -800,10 +860,41 @@ pub struct HidBPFTrace {
 #[derive(Default)]
 pub struct HidBPFStructOps {}
 
+pub const BPFFS_ROOT: &str = "/sys/fs/bpf/hid";
+
+/// Convert HID device sysname to bpffs directory name
+/// e.g., "0018:06CB:CD7A.006F" -> "0018_06CB_CD7A_006F"
+pub fn sysname_to_bpffs(sysname: &str) -> String {
+    sysname.replace([':', '.'], "_")
+}
+
+/// Convert bpffs directory name to HID device sysname
+/// e.g., "0018_06CB_CD7A_006F" -> "0018:06CB:CD7A.006F"
+pub fn bpffs_to_sysname(bpffs_name: &str) -> String {
+    let parts: Vec<&str> = bpffs_name.splitn(4, '_').collect();
+
+    match parts.as_slice() {
+        [bus, vendor, product, instance] => format!("{bus}:{vendor}:{product}.{instance}"),
+        _ => parts.join(":"),
+    }
+}
+
+/// Get the sysfs path for a HID device sysname
+/// Returns the full path under /sys/bus/hid/devices/
+pub fn get_hid_sysfs_path(sysname: &str) -> Option<String> {
+    let path = format!("/sys/bus/hid/devices/{}", sysname);
+    if std::path::Path::new(&path).exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
 pub fn get_bpffs_path(sysname: &str, object: &str) -> String {
     format!(
-        "/sys/fs/bpf/hid/{}/{}",
-        sysname.replace([':', '.'], "_"),
+        "{}/{}/{}",
+        BPFFS_ROOT,
+        sysname_to_bpffs(sysname),
         object.replace([':', '.'], "_"),
     )
 }
@@ -1155,5 +1246,126 @@ impl HidBPF {
         }
 
         Ok(())
+    }
+}
+
+// BPF introspection utilities for listing loaded programs
+
+/// Build a map of prog_id -> prog_name for efficient lookup
+pub fn build_prog_name_map() -> std::collections::HashMap<u32, String> {
+    use std::collections::HashMap;
+
+    let mut prog_names: HashMap<u32, String> = HashMap::new();
+
+    // Iterate over all BPF programs
+    let mut prog_id = 0u32;
+    loop {
+        let mut next_id = 0u32;
+        let ret = unsafe { libbpf_sys::bpf_prog_get_next_id(prog_id, &mut next_id) };
+        if ret != 0 {
+            break;
+        }
+        prog_id = next_id;
+
+        let fd = unsafe { libbpf_sys::bpf_prog_get_fd_by_id(prog_id) };
+        if fd < 0 {
+            continue;
+        }
+
+        unsafe {
+            let mut info: libbpf_sys::bpf_prog_info = std::mem::zeroed();
+            let mut info_len: u32 = std::mem::size_of::<libbpf_sys::bpf_prog_info>() as u32;
+
+            if libbpf_sys::bpf_prog_get_info_by_fd(fd, &mut info, &mut info_len) == 0 {
+                let prog_name = std::ffi::CStr::from_ptr(info.name.as_ptr() as *const _)
+                    .to_string_lossy()
+                    .to_string();
+                prog_names.insert(info.id, prog_name);
+            }
+
+            libc::close(fd);
+        }
+    }
+
+    prog_names
+}
+
+/// Read struct_ops map and extract callback program names
+pub fn get_struct_ops_callbacks(
+    map_id: u32,
+    prog_names: &std::collections::HashMap<u32, String>,
+) -> Vec<(String, u32)> {
+    // Open the struct_ops map
+    let fd = unsafe { libbpf_sys::bpf_map_get_fd_by_id(map_id) };
+    if fd < 0 {
+        return Vec::new();
+    }
+
+    // Query map info to get the correct value_size
+    let mut value = unsafe {
+        let mut info: libbpf_sys::bpf_map_info = std::mem::zeroed();
+        let mut info_len = std::mem::size_of::<libbpf_sys::bpf_map_info>() as u32;
+        if libbpf_sys::bpf_map_get_info_by_fd(fd, &mut info, &mut info_len) != 0 {
+            libc::close(fd);
+            return Vec::new();
+        }
+        vec![0u8; info.value_size as usize]
+    };
+
+    // Read map value (key is 0 for struct_ops)
+    let key = 0u32;
+    let ret = unsafe {
+        libbpf_sys::bpf_map_lookup_elem(
+            fd,
+            &key as *const _ as *const _,
+            value.as_mut_ptr() as *mut _,
+        )
+    };
+
+    unsafe { libc::close(fd) };
+
+    if ret != 0 {
+        return Vec::new();
+    }
+
+    // Scan for u32 values that match known program IDs.
+    // Struct_ops values store prog_ids at pointer-aligned offsets.
+    let mut callbacks = Vec::new();
+    for offset in (0..value.len().saturating_sub(4)).step_by(std::mem::size_of::<usize>()) {
+        let prog_id = u32::from_ne_bytes([
+            value[offset],
+            value[offset + 1],
+            value[offset + 2],
+            value[offset + 3],
+        ]);
+
+        if prog_id > 0 {
+            if let Some(prog_name) = prog_names.get(&prog_id) {
+                callbacks.push((prog_name.clone(), prog_id));
+            }
+        }
+    }
+
+    callbacks
+}
+
+/// Get struct_ops map_id from a pinned link
+pub fn get_struct_ops_map_id(link_path: &std::path::Path) -> Option<u32> {
+    use std::os::fd::{AsFd, AsRawFd};
+
+    let link = libbpf_rs::Link::open(link_path).ok()?;
+    let fd = link.as_fd().as_raw_fd();
+
+    unsafe {
+        let mut info: libbpf_sys::bpf_link_info = std::mem::zeroed();
+        let mut info_len: u32 = std::mem::size_of::<libbpf_sys::bpf_link_info>() as u32;
+
+        if libbpf_sys::bpf_link_get_info_by_fd(fd, &mut info, &mut info_len) == 0
+            && info.type_ == libbpf_sys::BPF_LINK_TYPE_STRUCT_OPS
+        {
+            Some(info.__bindgen_anon_1.struct_ops.map_id)
+        } else {
+            None
+        }
     }
 }
