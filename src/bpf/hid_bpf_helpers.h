@@ -60,6 +60,36 @@ extern int bpf_wq_set_callback_impl(struct bpf_wq *wq,
 #define HID_MAX_BUFFER_SIZE	16384		/* 16kb, from include/linux/hid.h */
 #define HID_MAX_PACKET (HID_MAX_BUFFER_SIZE / PRINTK_PACKET_SIZE)
 
+/**
+ * Use: _cleanup_(somefunction) struct foo *bar;
+ */
+#define _cleanup_(_x) __attribute__((cleanup(_x)))
+
+/**
+ * Use: _release_(foo) *bar;
+ *
+ * This requires foo_releasep() to be present, use DEFINE_RELEASE_CLEANUP_FUNC.
+ */
+#define _release_(_type) struct _type __attribute__((cleanup(_type##_releasep)))
+
+/**
+ * Define a cleanup function for the struct type foo with a matching
+ * foo_release(). Use:
+ * DEFINE_RELEASE_CLEANUP_FUNC(foo)
+ * _unref_(foo) struct foo *bar;
+ */
+#define DEFINE_RELEASE_CLEANUP_FUNC(_type)				\
+	static inline void _type##_releasep(struct _type **_p) {	\
+		if (*_p)						\
+			_type##_release(*_p);				\
+	}								\
+	struct __useless_struct_to_allow_trailing_semicolon__
+
+/* for being able to have a cleanup function */
+#define hid_bpf_ctx_release hid_bpf_release_context
+DEFINE_RELEASE_CLEANUP_FUNC(hid_bpf_ctx);
+
+
 char __printk_str[PRINTK_PACKET_SIZE * 3 + 1];
 
 static inline void hid_bpf_printk_event(struct hid_bpf_ctx *hctx)
