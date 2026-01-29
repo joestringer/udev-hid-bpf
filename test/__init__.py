@@ -18,6 +18,7 @@ import os
 import json
 import pytest
 import random
+import collections
 import dataclasses
 import errno
 import subprocess
@@ -147,6 +148,7 @@ class PrivateTestData:
     output_reports: list[OutputReport] = dataclasses.field(default_factory=list)
     hw_requests: list[HidRawRequest] = dataclasses.field(default_factory=list)
     maps_data: dict[int, dict[int, ...]] = dataclasses.field(default_factory=dict)
+    queue_data: dict[int, collections.deque] = dataclasses.field(default_factory=dict)
     asyncs: dict[int, TestAsyncCb] = dataclasses.field(default_factory=dict)
     iterators: dict[int, PrivateBpfNumIterator] = dataclasses.field(
         default_factory=dict
@@ -247,6 +249,39 @@ class Callbacks(ctypes.Structure):
 
         # store the returned value in callbacks
         callbacks.helpers_retval = ctypes.cast(ctypes.byref(data), ctypes.c_void_p)
+
+        return 0
+
+    def _bpf_map_pop_elem(callbacks_p, map_p, data_p):
+        callbacks = callbacks_p.contents
+        pdata = callbacks.private_data
+
+        if map_p not in pdata.bpf.maps:
+            return -errno.ENOENT
+
+        queue = pdata.queue_data.get(map_p)
+        if not queue:
+            return -errno.ENOENT
+
+        map = pdata.bpf.maps[map_p]
+        value = queue.popleft()
+        ctypes.memmove(data_p, ctypes.byref(value), ctypes.sizeof(map.ctype))
+
+        return 0
+
+    def _bpf_map_push_elem(callbacks_p, map_p, data_p, flags):
+        callbacks = callbacks_p.contents
+        pdata = callbacks.private_data
+
+        if map_p not in pdata.bpf.maps:
+            return -errno.ENOENT
+
+        map = pdata.bpf.maps[map_p]
+        queue = pdata.queue_data.setdefault(map_p, collections.deque())
+
+        value = map.ctype()
+        ctypes.memmove(ctypes.byref(value), data_p, ctypes.sizeof(value))
+        queue.append(value)
 
         return 0
 

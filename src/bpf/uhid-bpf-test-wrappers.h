@@ -39,6 +39,12 @@ typedef int (*hid_bpf_async_callback_t)(void *map, int *key, void *value);
 #define bpf_map_lookup_elem bpf_map_lookup_elem__hid_bpf
 extern void *bpf_map_lookup_elem(void *map, const void *key);
 
+#define bpf_map_pop_elem bpf_map_pop_elem__hid_bpf
+extern int bpf_map_pop_elem(void *map, void *data);
+
+#define bpf_map_push_elem bpf_map_push_elem__hid_bpf
+extern int bpf_map_push_elem(void *map, void *data, uint64_t flags);
+
 #define bpf_spin_lock(a) bpf_spin_lock__hid_bpf(a)
 extern void bpf_spin_lock(void *);
 

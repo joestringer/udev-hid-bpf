@@ -34,6 +34,8 @@ static struct test_callbacks {
 					__u8 *buf, size_t buf__sz);
 	int (*bpf_map_lookup_elem)(struct test_callbacks *callbacks, void *map,
 				   const void *key);
+	int (*bpf_map_pop_elem)(struct test_callbacks *callbacks, void *map, void *data);
+	int (*bpf_map_push_elem)(struct test_callbacks *callbacks, void *map, void *data, uint64_t flags);
 	int (*bpf_timer_init)(struct test_callbacks *callbacks, void *timer, void *map, unsigned int flags);
 	int (*async_set_callback)(struct test_callbacks *callbacks, void *timer, void* cb);
 	int (*async_start)(struct test_callbacks *callbacks, void *timer,
@@ -137,6 +139,16 @@ void *bpf_map_lookup_elem__hid_bpf(struct bpf_map *map, const void *key)
 		return NULL;
 
 	return callbacks.helpers_retval;
+}
+
+int bpf_map_pop_elem__hid_bpf(struct bpf_map *map, void *data)
+{
+	return callbacks.bpf_map_pop_elem(&callbacks, map, data);
+}
+
+int bpf_map_push_elem__hid_bpf(struct bpf_map *map, void *data, uint64_t flags)
+{
+	return callbacks.bpf_map_push_elem(&callbacks, map, data, flags);
 }
 
 void bpf_spin_lock__hid_bpf(void* lock)
