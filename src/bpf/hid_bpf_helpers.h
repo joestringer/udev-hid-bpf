@@ -89,6 +89,56 @@ extern int bpf_wq_set_callback_impl(struct bpf_wq *wq,
 #define hid_bpf_ctx_release hid_bpf_release_context
 DEFINE_RELEASE_CLEANUP_FUNC(hid_bpf_ctx);
 
+/*
+ * Kernel-style guard macros adapted for BPF
+ * Based on include/linux/cleanup.h from the Linux kernel
+ *
+ * These provide automatic lock/unlock using __attribute__((cleanup))
+ * similar to how _release_() works for contexts.
+ */
+
+/**
+ * DEFINE_GUARD(name, type, lock, unlock):
+ *	Define a guard for automatic lock/unlock using the same pattern as _release_()
+ *	@name: identifier for the guard (e.g., bpf_spin)
+ *	@type: lock variable type (e.g., struct bpf_spin_lock)
+ *	@lock: lock function name (e.g., bpf_spin_lock)
+ *	@unlock: unlock function name (e.g., bpf_spin_unlock)
+ *
+ * guard(name):
+ *	Declare and lock in one statement - lock held until end of scope
+ *
+ * Example:
+ *	DEFINE_GUARD(bpf_spin, struct bpf_spin_lock, bpf_spin_lock, bpf_spin_unlock)
+ *
+ *	void foo(struct bpf_spin_lock *lock) {
+ *		guard(bpf_spin)(lock);
+ *		// lock held until end of scope
+ *	}
+ */
+
+/* Guard helper struct - stores lock pointer for cleanup */
+#define DEFINE_GUARD(_name, _type, _lock, _unlock)			\
+struct _name##_guard {							\
+	_type *lock;							\
+};									\
+static inline void _name##_guard_cleanup(struct _name##_guard *g) {	\
+	if (g && g->lock) 						\
+		_unlock(g->lock);					\
+}									\
+static inline struct _name##_guard _name##_guard_init(_type *l) {	\
+	if (l)								\
+		_lock(l);						\
+	return (struct _name##_guard){.lock = l};			\
+}									\
+struct __useless_struct_to_allow_trailing_semicolon__
+
+#define guard(_name) \
+	struct _name##_guard COMBINE(guard, __LINE__) __attribute__((cleanup(_name##_guard_cleanup))) = \
+		_name##_guard_init
+
+/* Define BPF spinlock guard */
+DEFINE_GUARD(bpf_spin, struct bpf_spin_lock, bpf_spin_lock, bpf_spin_unlock);
 
 char __printk_str[PRINTK_PACKET_SIZE * 3 + 1];
 
