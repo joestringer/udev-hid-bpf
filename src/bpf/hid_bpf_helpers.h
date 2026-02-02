@@ -10,6 +10,10 @@
 #include <bpf/bpf_endian.h>
 #include <linux/errno.h>
 
+#ifdef UDEV_HID_BPF_TEST_SUITE
+#include "uhid-bpf-test-wrappers.h"
+#endif
+
 /* Compiler attributes */
 #ifndef __packed
 #define __packed __attribute__((packed))
@@ -299,10 +303,6 @@ static inline void hid_bpf_printk_event(struct hid_bpf_ctx *hctx)
 #define hid_bpf_cpu_to_be16(x)	bpf_htons(x)
 #define hid_bpf_cpu_to_be32(x)	bpf_htonl(x)
 #define hid_bpf_cpu_to_be64(x)	bpf_cpu_to_be64(x)
-
-#ifdef UDEV_HID_BPF_TEST_SUITE
-#include "uhid-bpf-test-wrappers.h"
-#endif
 
 /* Report Descriptor Structures */
 #define HID_MAX_COLLECTIONS 32
