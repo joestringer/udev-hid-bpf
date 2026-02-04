@@ -238,7 +238,8 @@ int BPF_PROG(ack05_fix_rdesc, struct hid_bpf_ctx *hctx)
 	return sizeof(disabled_rdesc);
 }
 
-static int HID_BPF_ASYNC_FUN(switch_to_raw_mode)(struct hid_bpf_ctx *hid)
+static int HID_BPF_ASYNC_FUN(switch_to_raw_mode)(struct hid_bpf_ctx *hid,
+						 void *map, int *key, void *value)
 {
 	static __u8 magic_0[32] = {0x02, 0xb0, 0x04, 0x00, 0x00};
 	int err;
@@ -320,7 +321,7 @@ int probe(struct hid_bpf_probe_args *ctx)
 		}
 
 		ctx->retval = HID_BPF_ASYNC_INIT(switch_to_raw_mode) ||
-			      switch_to_raw_mode(hctx);
+			      switch_to_raw_mode(hctx, 0, 0, 0);
 
 		hid_bpf_release_context(hctx);
 	}

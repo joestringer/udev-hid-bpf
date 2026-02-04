@@ -42,29 +42,29 @@ struct {
  * The caller is responsible for allocating a key in the async map
  * with hid_bpf_async_get_ctx().
  */
-#define HID_BPF_ASYNC_CB(cb)					\
-cb(void *map, int *key, void *value);				\
-static __always_inline int					\
-____##cb(struct hid_bpf_ctx *ctx);				\
-typeof(cb(0, 0, 0)) cb(void *map, int *key, void *value)	\
-{								\
+#define HID_BPF_ASYNC_CB(cb)						\
+cb(void *map, int *key, void *value);					\
+static __always_inline int						\
+____##cb(struct hid_bpf_ctx *ctx, void *map, int *key, void *value);	\
+typeof(cb(0, 0, 0)) cb(void *map, int *key, void *value)		\
+{									\
 	struct hid_bpf_async_map_elem *e;				\
-	struct hid_bpf_ctx *ctx;				\
-								\
+	struct hid_bpf_ctx *ctx;					\
+									\
 	e = (struct hid_bpf_async_map_elem *)value;			\
-	ctx = hid_bpf_allocate_context(e->hid);			\
-	if (!ctx)						\
-		return 0; /* EPERM check */			\
-								\
-	e->state = HID_BPF_ASYNC_STATE_RUNNING;			\
-								\
-	____##cb(ctx);						\
-								\
-	e->state = HID_BPF_ASYNC_STATE_INITIALIZED;		\
-	hid_bpf_release_context(ctx);				\
-	return 0;						\
-}								\
-static __always_inline int					\
+	ctx = hid_bpf_allocate_context(e->hid);				\
+	if (!ctx)							\
+		return 0; /* EPERM check */				\
+									\
+	e->state = HID_BPF_ASYNC_STATE_RUNNING;				\
+									\
+	____##cb(ctx, map, key, value);					\
+									\
+	e->state = HID_BPF_ASYNC_STATE_INITIALIZED;			\
+	hid_bpf_release_context(ctx);					\
+	return 0;							\
+}									\
+static __always_inline int						\
 ____##cb
 
 /**
@@ -73,20 +73,31 @@ ____##cb
  * Needs to be used in conjunction with HID_BPF_ASYNC_INIT and HID_BPF_ASYNC_DELAYED_CALL
  */
 #define HID_BPF_ASYNC_FUN(fun)						\
-fun(struct hid_bpf_ctx *ctx);					\
-int ____key__##fun;						\
-static int ____async_init_##fun(void)				\
-{								\
+fun(struct hid_bpf_ctx *ctx, void *map, int *key, void *value);		\
+int ____key__##fun;							\
+static int HID_BPF_ASYNC_CB(____##fun##_cb)(struct hid_bpf_ctx *hctx,	\
+				void *map, int *key, void *value)	\
+{									\
+	return fun(hctx, map, key, value);				\
+}									\
+static int ____async_init_##fun(void)					\
+{									\
+	struct hid_bpf_async_map_elem *__elem;				\
+	int __err;							\
+									\
 	____key__##fun = hid_bpf_async_get_ctx();			\
-	if (____key__##fun < 0)					\
-		return ____key__##fun;				\
-	return 0;						\
-}								\
-static int HID_BPF_ASYNC_CB(____##fun##_cb)(struct hid_bpf_ctx *hctx)	\
-{								\
-	return fun(hctx);					\
-}								\
-typeof(fun(0)) fun
+	if (____key__##fun < 0)						\
+		return ____key__##fun;					\
+	__elem = bpf_map_lookup_elem(&hid_bpf_async_ctx_map,		\
+					&____key__##fun);		\
+	if (!__elem)							\
+		return -EINVAL;						\
+	__err = bpf_wq_set_callback(&__elem->wq, ____##fun##_cb, 0);	\
+	if (__err)							\
+		return __err;						\
+	return 0;							\
+}									\
+typeof(fun(0, 0, 0, 0)) fun
 
 #define HID_BPF_ASYNC_INIT(fun)	____async_init_##fun()
 #define HID_BPF_ASYNC_DELAYED_CALL(fun, ctx, delay)		\
