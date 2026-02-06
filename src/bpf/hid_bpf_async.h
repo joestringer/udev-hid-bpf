@@ -27,6 +27,7 @@ struct hid_bpf_async_map_elem {
 	struct bpf_timer t;
 	struct bpf_wq wq;
 	u32 hid;
+	const char *name;
 };
 
 struct {
@@ -80,7 +81,7 @@ static int HID_BPF_ASYNC_CB(____##fun##_cb)(struct hid_bpf_ctx *hctx,	\
 {									\
 	return fun(hctx, map, key, value);				\
 }									\
-static int ____async_init_##fun(void)					\
+static int ____async_init_##fun(const char *name)			\
 {									\
 	struct hid_bpf_async_map_elem *__elem;				\
 	int __err;							\
@@ -95,12 +96,13 @@ static int ____async_init_##fun(void)					\
 	__err = bpf_wq_set_callback(&__elem->wq, ____##fun##_cb, 0);	\
 	if (__err)							\
 		return __err;						\
+	__elem->name = name;						\
 	return 0;							\
 }									\
 typeof(fun(0, 0, 0, 0)) fun
 
-#define HID_BPF_ASYNC_INIT(fun)	____async_init_##fun()
-#define HID_BPF_ASYNC_DELAYED_CALL(fun, ctx, delay)		\
+#define HID_BPF_ASYNC_INIT(fun)	____async_init_##fun(#fun)
+#define HID_BPF_ASYNC_DELAYED_CALL(fun, ctx, delay)			\
 	hid_bpf_async_delayed_call(ctx, delay, ____key__##fun, ____##fun##_cb)
 
 /*
