@@ -21,6 +21,23 @@ enum hid_bpf_async_state {
 	HID_BPF_ASYNC_STATE_RUNNING,
 };
 
+static inline const char *pr_hid_bpf_async_state(enum hid_bpf_async_state state)
+{
+	switch (state) {
+	case HID_BPF_ASYNC_STATE_UNSET:
+		return "HID_BPF_ASYNC_STATE_UNSET";
+	case HID_BPF_ASYNC_STATE_INITIALIZING:
+		return "HID_BPF_ASYNC_STATE_INITIALIZING";
+	case HID_BPF_ASYNC_STATE_INITIALIZED:
+		return "HID_BPF_ASYNC_STATE_INITIALIZED";
+	case HID_BPF_ASYNC_STATE_STARTING:
+		return "HID_BPF_ASYNC_STATE_STARTING";
+	case HID_BPF_ASYNC_STATE_RUNNING:
+		return "HID_BPF_ASYNC_STATE_RUNNING";
+	}
+	return "UNKNOWN_STATE";
+}
+
 struct hid_bpf_async_map_elem {
 	struct bpf_spin_lock lock;
 	enum hid_bpf_async_state state;
