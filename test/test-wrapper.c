@@ -20,6 +20,17 @@ struct test_async_cb {
 	hid_bpf_async_callback_t cb;
 };
 
+#define MAX_PENDING_TIMERS 16
+
+static struct {
+	struct test_async_cb cb;
+	int delay;
+	void *timer_p;
+} pending_timers[MAX_PENDING_TIMERS];
+
+static int num_pending_timers;
+static int execution_depth;
+
 static struct test_callbacks {
 	int (*hid_bpf_allocate_context)(struct test_callbacks *callbacks, unsigned int hid);
 	void (*hid_bpf_release_context)(struct test_callbacks *callbacks, void* ctx);
@@ -125,7 +136,9 @@ int bpf_wq_start(struct bpf_wq *wq, unsigned int flags)
 		return err;
 
 	async_cb = (struct test_async_cb *)callbacks.helpers_retval;
+	execution_depth++;
 	async_cb->cb(async_cb->map, &async_cb->key, async_cb->value);
+	execution_depth--;
 
 	return 0;
 }
@@ -169,6 +182,22 @@ int bpf_timer_set_callback__hid_bpf(void *timer, hid_bpf_async_callback_t cb)
 	return callbacks.async_set_callback(&callbacks, timer, cb);
 }
 
+static bool remove_pending_timer(void *timer)
+{
+	int i;
+
+	for (i = 0; i < num_pending_timers; i++) {
+		if (pending_timers[i].timer_p == timer) {
+			num_pending_timers--;
+			if (i != num_pending_timers)
+				pending_timers[i] = pending_timers[num_pending_timers];
+			return true;
+		}
+	}
+
+	return false;
+}
+
 int bpf_timer_start__hid_bpf(void *timer, int delay, int flags)
 {
 	struct test_async_cb *async_cb;
@@ -179,16 +208,36 @@ int bpf_timer_start__hid_bpf(void *timer, int delay, int flags)
 	if (err)
 		return err;
 
+	async_cb = (struct test_async_cb *)callbacks.helpers_retval;
+
+	/* Remove any previous pending entry for this timer */
+	remove_pending_timer(timer);
+
+	if (execution_depth > 0 && delay > 0) {
+		/* Queue for later — don't fire inside nested execution */
+		if (num_pending_timers < MAX_PENDING_TIMERS) {
+			pending_timers[num_pending_timers].cb = *async_cb;
+			pending_timers[num_pending_timers].delay = delay;
+			pending_timers[num_pending_timers].timer_p = timer;
+			num_pending_timers++;
+		}
+		return 0;
+	}
+
 	current_time = callbacks.time;
 	callbacks.time += (delay / 1000 / 1000); /* delay is in nanoseconds, we care only about milliseconds */
 
-	async_cb = (struct test_async_cb *)callbacks.helpers_retval;
 	async_cb->cb(async_cb->map, &async_cb->key, async_cb->value);
 
 	/* reset our time to the previous value */
 	callbacks.time = current_time;
 
 	return 0;
+}
+
+int bpf_timer_cancel__hid_bpf(void *timer)
+{
+	return remove_pending_timer(timer) ? 0 : 1;
 }
 
 int bpf_iter_num_new(struct bpf_iter_num *it, int start, int end)

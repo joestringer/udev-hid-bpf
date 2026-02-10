@@ -60,4 +60,7 @@ extern int bpf_timer_set_callback(void *, hid_bpf_async_callback_t);
 #define bpf_timer_start bpf_timer_start__hid_bpf
 extern int bpf_timer_start(void *, int, int);
 
+#define bpf_timer_cancel bpf_timer_cancel__hid_bpf
+extern int bpf_timer_cancel(void *);
+
 #endif /* __UHID_BPF_TEST_WRAPPERS_H */
