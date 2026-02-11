@@ -608,12 +608,15 @@ class Bpf:
             HidBpfCtx,
             BpfTimer,
             BpfWq,
-            HidRdescDescriptor,
             TestAsyncCb,
             Callbacks,
         ]:
             btf.build_struct(c)
             assert hasattr(c, "_fields_")
+
+        # HidRdescDescriptor is optional - only present in BPFs that use
+        # HID_REPORT_DESCRIPTOR
+        btf.build_struct(HidRdescDescriptor)
 
         jsonfile = Path(ld_path) / f"{name}.json"
         if not jsonfile.exists():
