@@ -55,6 +55,9 @@ static struct test_callbacks {
 	int (*bpf_iter_num_new)(struct test_callbacks *callbacks, void *it, int start, int end);
 	void *(*bpf_iter_num_next)(struct test_callbacks *callbacks, void *it);
 	int (*bpf_iter_num_destroy)(struct test_callbacks *callbacks, void *it);
+	int (*hid_bpf_input_report)(struct test_callbacks *callbacks,
+				    struct hid_bpf_ctx *ctx,
+				    int type, uint8_t *data, uint32_t len);
 	/* The data returned by hid_bpf_get_data */
 	uint8_t *hid_bpf_data;
 	size_t hid_bpf_data_sz;
@@ -238,6 +241,16 @@ int bpf_timer_start__hid_bpf(void *timer, int delay, int flags)
 int bpf_timer_cancel__hid_bpf(void *timer)
 {
 	return remove_pending_timer(timer) ? 0 : 1;
+}
+
+int hid_bpf_input_report(struct hid_bpf_ctx *ctx,
+			 enum hid_report_type type,
+			 __u8 *buf, size_t len)
+{
+	if (!callbacks.hid_bpf_input_report)
+		return 0;
+
+	return callbacks.hid_bpf_input_report(&callbacks, ctx, type, buf, len);
 }
 
 int bpf_iter_num_new(struct bpf_iter_num *it, int start, int end)

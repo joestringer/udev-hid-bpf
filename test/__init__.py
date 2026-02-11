@@ -120,6 +120,13 @@ class HidRawRequest:
 
 
 @dataclass
+class InputReport:
+    time: int
+    data: Tuple[bytes]
+    report_type: ReportType
+
+
+@dataclass
 class PrivateBpfNumIterator:
     start: int
     end: int
@@ -147,6 +154,7 @@ class PrivateTestData:
     id: int = dataclasses.field(default_factory=lambda: random.randint(0, 0xFFFF))
     output_reports: list[OutputReport] = dataclasses.field(default_factory=list)
     hw_requests: list[HidRawRequest] = dataclasses.field(default_factory=list)
+    input_reports: list[InputReport] = dataclasses.field(default_factory=list)
     maps_data: dict[int, dict[int, ...]] = dataclasses.field(default_factory=dict)
     queue_data: dict[int, collections.deque] = dataclasses.field(default_factory=dict)
     asyncs: dict[int, TestAsyncCb] = dataclasses.field(default_factory=dict)
@@ -402,6 +410,21 @@ class Callbacks(ctypes.Structure):
         if iter_p in pdata.iterators:
             del pdata.iterators[iter_p]
 
+        return 0
+
+    def _hid_bpf_input_report(callbacks_p, ctx_p, _type, data_p, size):
+        if not Callbacks.validate_ctx(callbacks_p, ctx_p):
+            return -errno.EINVAL
+        DataArray = ctypes.c_uint8 * size
+        c_data = DataArray()
+        p2 = ctypes.byref(c_data)
+        ctypes.memmove(p2, data_p, size)
+        data = bytes(c_data)
+
+        callbacks = callbacks_p.contents
+        callbacks.private_data.input_reports.append(
+            InputReport(callbacks.time, data, ReportType(_type))
+        )
         return 0
 
 
