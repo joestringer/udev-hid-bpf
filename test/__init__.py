@@ -152,6 +152,8 @@ class PrivateTestData:
     bpf: "Bpf"
     current_ctx: HidBpfCtx = dataclasses.field(default_factory=HidBpfCtx)
     id: int = dataclasses.field(default_factory=lambda: random.randint(0, 0xFFFF))
+    vendor: int = 0
+    product: int = 0
     output_reports: list[OutputReport] = dataclasses.field(default_factory=list)
     hw_requests: list[HidRawRequest] = dataclasses.field(default_factory=list)
     input_reports: list[InputReport] = dataclasses.field(default_factory=list)
@@ -172,6 +174,8 @@ class Callbacks(ctypes.Structure):
 
     def __init__(self, private: PrivateTestData):
         hid = HidDevice(id=private.id)
+        hid.vendor = private.vendor
+        hid.product = private.product
         private.current_ctx.hid = ctypes.pointer(hid)
 
         super().__init__(private_data=ctypes.py_object(private))
