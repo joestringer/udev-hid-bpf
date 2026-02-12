@@ -5,7 +5,7 @@
 from ctypes import (
     c_int,
 )
-from typing import Optional, Tuple, Type, Self
+from typing import Optional, Tuple, Type
 from dataclasses import dataclass
 from pathlib import Path
 from enum import IntEnum
@@ -23,7 +23,7 @@ import dataclasses
 import errno
 import subprocess
 
-from .btf import Btf, Map
+from .btf import Btf
 
 logger = logging.getLogger(__name__)
 random.seed()
@@ -449,9 +449,6 @@ class Api:
 
 
 class Bpf:
-    # Cached .so files
-    _libs: dict[str, "Bpf"] = {}
-
     _api_prototypes: list[Api] = [
         Api(
             name="probe",
@@ -467,11 +464,121 @@ class Bpf:
         ),
     ]
 
-    def __init__(self, lib, btf: Btf, maps: dict[int, Map]):
+    def __init__(self, name: str):
+        lib_name = f"libtest-{name}"
+
+        # Our test setup guarantees this works, running things manually is
+        # a bit more complicated.
+        ld_path = os.environ.get("LD_LIBRARY_PATH")
+        assert ld_path is not None, (
+            "Expected LD_LIBRARY_PATH to be set up for the tests"
+        )
+
+        sofile = Path(ld_path) / f"{lib_name}.so"
+        if not sofile.exists():
+            pytest.skip(f"Unable to locate {sofile}, assuming this BPF wasn't built")
+
+        # BTF and JSON are always relative to the original name
+        sofile_dir = sofile.with_suffix(".so.p")
+        if not sofile_dir.exists():
+            pytest.skip(
+                f"Unable to locate {sofile_dir}, assuming this BPF wasn't built"
+            )
+
+        # We recreate the BTF information for every .so so the Btf class knows
+        # about our types
+        btf = Btf.load(list(sofile_dir.iterdir()))
+        for c in [
+            HidProbeArgs,
+            HidDevice,
+            HidBpfCtx,
+            BpfTimer,
+            BpfWq,
+            TestAsyncCb,
+            Callbacks,
+        ]:
+            btf.build_struct(c)
+            assert hasattr(c, "_fields_")
+
+        # HidRdescDescriptor is optional - only present in BPFs that use
+        # HID_REPORT_DESCRIPTOR
+        btf.build_struct(HidRdescDescriptor)
+
+        jsonfile = Path(ld_path) / f"{lib_name}.json"
+        if not jsonfile.exists():
+            pytest.skip(f"Unable to locate {jsonfile}, assuming this BPF wasn't built")
+
+        # Load the libtest-$BPF.so file first.o, map probe and set_callbacks which
+        # have a fixed name.
+        #
+        # Then try to find the corresponding libtest-$BPF.json file that meson
+        # should have generated.
+        # Because our actual entry points have custom names we check the json for the
+        # right section and then map those we want into fixed-name wrappers, i.e.
+        # SEC(HID_BPF_RDESC_FIXUP) becomes self._hid_bpf_rdesc_fixup() which points
+        # to the right ctypes function.
+        try:
+            lib = ctypes.CDLL(sofile.name, use_errno=True)
+            assert lib is not None
+        except OSError as e:
+            pytest.exit(
+                f"Error loading the library: {e}. Maybe export LD_LIBRARY_PATH=builddir/test"
+            )
+        for api in self._api_prototypes:
+            if api.optional and not hasattr(lib, api.name):
+                continue
+            func = getattr(lib, api.name)
+            func.argtypes = api.args
+            func.restype = api.return_type
+            setattr(lib, api.basename, func)
+
+        maps = {
+            ctypes.cast(getattr(lib, m.name), ctypes.c_void_p).value: m
+            for m in btf.maps
+        }
+
+        try:
+            with open(jsonfile) as f:
+                js = json.load(f)[0]
+            for program in js["programs"]:
+
+                def register_fun(generic_name):
+                    func = getattr(lib, program["name"])
+                    func.argtypes = (ctypes.POINTER(HidBpfCtx),)
+                    func.restype = c_int
+                    setattr(lib, generic_name, func)
+
+                if program["section"].endswith("/hid_bpf_rdesc_fixup") or program[
+                    "section"
+                ].endswith("/hid_rdesc_fixup"):
+                    register_fun("_hid_bpf_rdesc_fixup")
+                elif program["section"].endswith("/hid_bpf_device_event") or program[
+                    "section"
+                ].endswith("/hid_device_event"):
+                    register_fun("_hid_bpf_device_event")
+        except OSError as e:
+            pytest.exit(
+                f"Error loading the JSON file: {e}. Unexpected LD_LIBRARY_PATH?"
+            )
+
         self.lib = lib
         self._callbacks = None
         self.maps = maps
         self.btf = btf
+
+    def close(self):
+        """Close the shared library handle."""
+        import _ctypes
+
+        if self.lib is not None:
+            _ctypes.dlclose(self.lib._handle)
+            self.lib = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
     def get_global_u32(self, name: str) -> int:
         """
@@ -585,113 +692,6 @@ class Bpf:
         except Exception as e:
             logger.error(f"Failed to inject HID_REPORT_DESCRIPTOR: {e}")
             return False
-
-    @classmethod
-    def _load(cls, name: str) -> Self:
-        # Our test setup guarantees this works, running things manually is
-        # a bit more complicated.
-        ld_path = os.environ.get("LD_LIBRARY_PATH")
-        assert ld_path is not None
-
-        sofile = Path(ld_path) / f"{name}.so"
-        if not sofile.exists():
-            pytest.skip(f"Unable to locate {sofile}, assuming this BPF wasn't built")
-
-        sofile_dir = sofile.with_suffix(".so.p")
-        if not sofile_dir.exists():
-            pytest.skip(
-                f"Unable to locate {sofile_dir}, assuming this BPF wasn't built"
-            )
-
-        # We recreate the BTF information for every .so so the Btf class knows
-        # about our types
-        btf = Btf.load(list(sofile_dir.iterdir()))
-        for c in [
-            HidProbeArgs,
-            HidDevice,
-            HidBpfCtx,
-            BpfTimer,
-            BpfWq,
-            TestAsyncCb,
-            Callbacks,
-        ]:
-            btf.build_struct(c)
-            assert hasattr(c, "_fields_")
-
-        # HidRdescDescriptor is optional - only present in BPFs that use
-        # HID_REPORT_DESCRIPTOR
-        btf.build_struct(HidRdescDescriptor)
-
-        jsonfile = Path(ld_path) / f"{name}.json"
-        if not jsonfile.exists():
-            pytest.skip(f"Unable to locate {jsonfile}, assuming this BPF wasn't built")
-
-        # Load the libtest-$BPF.so file first.o, map probe and set_callbacks which
-        # have a fixed name.
-        #
-        # Then try to find the corresponding libtest-$BPF.json file that meson
-        # should have generated.
-        # Because our actual entry points have custom names we check the json for the
-        # right section and then map those we want into fixed-name wrappers, i.e.
-        # SEC(HID_BPF_RDESC_FIXUP) becomes self._hid_bpf_rdesc_fixup() which points
-        # to the right ctypes function.
-        try:
-            lib = ctypes.CDLL(sofile.name, use_errno=True)
-            assert lib is not None
-        except OSError as e:
-            pytest.exit(
-                f"Error loading the library: {e}. Maybe export LD_LIBRARY_PATH=builddir/test"
-            )
-        for api in cls._api_prototypes:
-            if api.optional and not hasattr(lib, api.name):
-                continue
-            func = getattr(lib, api.name)
-            func.argtypes = api.args
-            func.restype = api.return_type
-            setattr(lib, api.basename, func)
-
-        maps = {
-            ctypes.cast(getattr(lib, m.name), ctypes.c_void_p).value: m
-            for m in btf.maps
-        }
-
-        try:
-            # Only one entry per json file so we're good
-            js = json.load(open(jsonfile))[0]
-            for program in js["programs"]:
-
-                def register_fun(generic_name):
-                    func = getattr(lib, program["name"])
-                    func.argtypes = (ctypes.POINTER(HidBpfCtx),)
-                    func.restype = c_int
-                    setattr(lib, generic_name, func)
-
-                if program["section"].endswith("/hid_bpf_rdesc_fixup") or program[
-                    "section"
-                ].endswith("/hid_rdesc_fixup"):
-                    register_fun("_hid_bpf_rdesc_fixup")
-                elif program["section"].endswith("/hid_bpf_device_event") or program[
-                    "section"
-                ].endswith("/hid_device_event"):
-                    register_fun("_hid_bpf_device_event")
-        except OSError as e:
-            pytest.exit(
-                f"Error loading the JSON file: {e}. Unexpected LD_LIBRARY_PATH?"
-            )
-
-        return cls(lib, btf, maps)
-
-    @classmethod
-    def load(cls, name: str) -> Self:
-        """
-        Load the given bpf.o file from our tree
-        """
-        name = f"libtest-{name}"
-        if name not in cls._libs:
-            cls._libs[name] = cls._load(name)
-        instance = cls._libs[name]
-        assert instance is not None
-        return instance
 
     def set_callbacks(self, callbacks: Callbacks):
         """

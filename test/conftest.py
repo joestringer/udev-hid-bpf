@@ -20,6 +20,5 @@ def bpf(source: str):
             pass
     """
     assert source is not None
-    bpf = Bpf.load(source)
-    assert bpf is not None
-    yield bpf
+    with Bpf(source) as bpf:
+        yield bpf
