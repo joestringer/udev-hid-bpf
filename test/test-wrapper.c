@@ -72,7 +72,7 @@ uint8_t* hid_bpf_get_data(struct hid_bpf_ctx *ctx, unsigned int offset, size_t s
 		return NULL;
 }
 
-void* hid_bpf_allocate_context(unsigned int hid)
+struct hid_bpf_ctx *hid_bpf_allocate_context(unsigned int hid)
 {
 	int ret = callbacks.hid_bpf_allocate_context(&callbacks, hid);
 
@@ -82,16 +82,16 @@ void* hid_bpf_allocate_context(unsigned int hid)
 	return callbacks.ctx;
 }
 
-void hid_bpf_release_context(void* ctx)
+void hid_bpf_release_context(struct hid_bpf_ctx *ctx)
 {
 	callbacks.hid_bpf_release_context(&callbacks, ctx);
 }
 
 int hid_bpf_hw_request(struct hid_bpf_ctx *ctx,
-		       uint8_t *data,
+		       __u8 *data,
 		       size_t buf__sz,
-		       int type,
-		       int reqtype)
+		       enum hid_report_type type,
+		       enum hid_class_request reqtype)
 {
 	return callbacks.hid_bpf_hw_request(&callbacks, ctx, data, buf__sz, type, reqtype);
 }
@@ -179,17 +179,17 @@ int bpf_timer_start__hid_bpf(void *timer, int delay, int flags)
 	return 0;
 }
 
-int bpf_iter_num_new(void *it, int start, int end)
+int bpf_iter_num_new(struct bpf_iter_num *it, int start, int end)
 {
 	return callbacks.bpf_iter_num_new(&callbacks, it, start, end);
 }
 
-int *bpf_iter_num_next(void *it)
+int *bpf_iter_num_next(struct bpf_iter_num *it)
 {
 	return (int *)callbacks.bpf_iter_num_next(&callbacks, it);
 }
 
-void bpf_iter_num_destroy(void *it)
+void bpf_iter_num_destroy(struct bpf_iter_num *it)
 {
 	callbacks.bpf_iter_num_destroy(&callbacks, it);
 }

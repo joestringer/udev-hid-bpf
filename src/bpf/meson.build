@@ -44,6 +44,8 @@ bpf_clang_flags = [
         '-target', 'bpf',
         '-g',
         '-c',
+        '-fms-extensions',
+        '-Wno-microsoft-anon-tag',
 ]
 
 bpf_gcc_flags = [

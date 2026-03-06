@@ -24,33 +24,6 @@
 #define __maybe_unused __attribute__((__unused__))
 #endif
 
-extern __u8 *hid_bpf_get_data(struct hid_bpf_ctx *ctx,
-			      unsigned int offset,
-			      const size_t __sz) __ksym;
-extern struct hid_bpf_ctx *hid_bpf_allocate_context(unsigned int hid_id) __ksym;
-extern void hid_bpf_release_context(struct hid_bpf_ctx *ctx) __ksym;
-extern int hid_bpf_hw_request(struct hid_bpf_ctx *ctx,
-			      __u8 *data,
-			      size_t buf__sz,
-			      enum hid_report_type type,
-			      enum hid_class_request reqtype) __ksym;
-extern int hid_bpf_hw_output_report(struct hid_bpf_ctx *ctx,
-				    __u8 *buf, size_t buf__sz) __weak __ksym;
-extern int hid_bpf_input_report(struct hid_bpf_ctx *ctx,
-				enum hid_report_type type,
-				__u8 *data,
-				size_t buf__sz) __weak __ksym;
-extern int hid_bpf_try_input_report(struct hid_bpf_ctx *ctx,
-				    enum hid_report_type type,
-				    __u8 *data,
-				    size_t buf__sz) __weak __ksym;
-
-/* bpf_wq implementation */
-extern int bpf_wq_init(struct bpf_wq *wq, void *p__map, unsigned int flags) __weak __ksym;
-extern int bpf_wq_start(struct bpf_wq *wq, unsigned int flags) __weak __ksym;
-extern int bpf_wq_set_callback_impl(struct bpf_wq *wq,
-		int (callback_fn)(void *map, int *key, void *value),
-		unsigned int flags__k, void *aux__ign) __ksym;
 #define bpf_wq_set_callback(wq, cb, flags) \
 	bpf_wq_set_callback_impl(wq, cb, flags, NULL)
 

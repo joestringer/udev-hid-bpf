@@ -41,7 +41,8 @@ foreach obj: bpf_objects
     )
     shared_library('test-@0@'.format(fname),
         src,
-        c_args : ['-Wno-unknown-pragmas', '-DUDEV_HID_BPF_TEST_SUITE', '-gbtf'],
+        c_args : ['-Wno-unknown-pragmas', '-DUDEV_HID_BPF_TEST_SUITE', '-DHID_BPF_DEBUG=1', '-gbtf',
+                  '-fms-extensions'],
         include_directories: include_directories('../src/bpf/'),
         install: false,
     )

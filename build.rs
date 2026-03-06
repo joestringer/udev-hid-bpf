@@ -23,6 +23,7 @@ fn build_bpf_wrappers(src_dir: &Path, dst_dir: &Path) {
     let skel_file = dst_dir.join(ATTACH_PROG.replace(".bpf.c", ".skel.rs"));
     SkeletonBuilder::new()
         .source(attach_prog)
+        .clang_args(["-fms-extensions", "-Wno-microsoft-anon-tag"])
         .build_and_generate(&skel_file)
         .unwrap();
 }
