@@ -1,13 +1,17 @@
-from click.testing import CliRunner
-from dataclasses import dataclass
-from pathlib import Path
-
 import git
 import pytest
 import re
-import sync_with_kernel_tree
 import sys
 import uuid
+from dataclasses import dataclass
+from pathlib import Path
+
+try:
+    from click.testing import CliRunner
+except ModuleNotFoundError:
+    pytest.skip("click is required for these tests", allow_module_level=True)
+
+import sync_with_kernel_tree
 
 
 @dataclass
