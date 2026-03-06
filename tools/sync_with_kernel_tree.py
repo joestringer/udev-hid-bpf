@@ -21,7 +21,6 @@ import sys
 
 
 DEFAULT_KERNEL_PATH = "../hid"
-RUN_IN_PYTEST = False
 
 
 @dataclass
@@ -73,13 +72,11 @@ def to_kernel_tree(repos):
     if repos.udev_hid_bpf.head.ref.name not in ["main"]:
         click.confirm(
             f"current head ({repos.udev_hid_bpf.head.ref}) is not on 'main', are you sure?",
-            default=RUN_IN_PYTEST,
             abort=True,
         )
 
     click.confirm(
         f"currently on {repos.kernel.head.ref}, is that OK?",
-        default=RUN_IN_PYTEST,
         abort=True,
     )
 
@@ -186,7 +183,6 @@ def confirm_filediff(src: str, dst: str, message: str) -> bool:
     rich.print("---")
     return click.confirm(
         message,
-        default=RUN_IN_PYTEST,
     )
 
 
@@ -201,7 +197,6 @@ def from_kernel_tree(repos):
     """
     click.confirm(
         f"currently on {repos.kernel.head.ref}, is that OK?",
-        default=RUN_IN_PYTEST,
         abort=True,
     )
 
@@ -329,7 +324,6 @@ def from_kernel_tree(repos):
 
                 if not click.confirm(
                     f"Uncommitted changes in {blob.path}, do you want to backport them?",
-                    default=RUN_IN_PYTEST,
                 ):
                     # abort backport of current file, and go to the next
                     continue

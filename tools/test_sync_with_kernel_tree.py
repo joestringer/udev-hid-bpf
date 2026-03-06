@@ -10,9 +10,6 @@ import sys
 import uuid
 
 
-sync_with_kernel_tree.RUN_IN_PYTEST = True
-
-
 @dataclass
 class VirtualGit:
     kernel: git.Repo
@@ -142,6 +139,7 @@ def run_cli(virtual_git, command, args):
     return runner.invoke(
         sync_with_kernel_tree.cli,
         _args,
+        input="y\n",
     )
 
 
