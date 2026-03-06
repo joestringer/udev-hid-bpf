@@ -3,6 +3,7 @@ pymod = import('python')
 python = pymod.find_installation('python3', required: get_option('tests'))
 
 build_tests = pytest.found() and python.found()
+summary({'pytest': build_tests}, section: 'Tests', bool_yn: true)
 if not build_tests
     subdir_done()
 endif
