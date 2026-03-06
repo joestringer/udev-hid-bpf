@@ -526,7 +526,12 @@ class Btf:
         if hasattr(cls, "_fields_"):
             return
 
-        self.get_type(cname, libbpf.btf__find_by_name(btf, cname.encode()))
+        type_id = libbpf.btf__find_by_name(btf, cname.encode())
+        assert type_id >= 0, (
+            f"Failed to find BTF type '{cname}' (btf__find_by_name returned {type_id})"
+        )
+
+        self.get_type(cname, type_id)
 
     @property
     def maps(self):
