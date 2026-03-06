@@ -10,6 +10,7 @@
 #include "vmlinux.h"
 #include "hid_bpf.h"
 #include "hid_bpf_helpers.h"
+#include "hid_report_descriptor_helpers.h"
 #include <bpf/bpf_tracing.h>
 
 HID_BPF_CONFIG(

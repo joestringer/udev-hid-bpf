@@ -5,7 +5,13 @@
 #include <stdio.h>
 #include <vmlinux.h>
 
+#include "hid_report_descriptor_helpers.h"
+
 typedef int (*hid_bpf_async_callback_t)(void *map, int *key, void *value);
+
+/* Dummy variables to force BTF inclusion of types needed by our pytests */
+static struct bpf_timer __attribute__((unused)) __btf_bpf_timer;
+static struct hid_rdesc_descriptor __attribute__((unused)) __btf_hid_rdesc_descriptor;
 
 struct test_async_cb {
 	void *map;
