@@ -31,6 +31,9 @@ if udevdir == ''
     endif
 endif
 
+# Required by Cargo via libudev-sys
+libudev = dependency('libudev')
+
 bpf_compiler = get_option('bpf-compiler')
 cc = meson.get_compiler('c')
 cc_id = cc.get_id()
