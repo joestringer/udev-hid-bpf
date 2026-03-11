@@ -29,6 +29,26 @@ logger = logging.getLogger(__name__)
 random.seed()
 
 
+_btf_cache: dict[str, Btf] = {}
+
+
+def _load_btf(source: str) -> Btf:
+    """Load and cache the BTF data for a BPF program source name.
+
+    Raises ``FileNotFoundError`` if the ``.so.p`` directory does not exist.
+    """
+    if source not in _btf_cache:
+        ld_path = os.environ.get("LD_LIBRARY_PATH")
+        assert ld_path is not None
+        sofile_dir = Path(ld_path) / f"libtest-{source}.so.p"
+        if not sofile_dir.exists():
+            raise FileNotFoundError(
+                f"Unable to locate {sofile_dir}, assuming this BPF wasn't built"
+            )
+        _btf_cache[source] = Btf.load(list(sofile_dir.iterdir()))
+    return _btf_cache[source]
+
+
 # to be automatically field by BTF thanks to libbpf
 class HidDevice(ctypes.Structure):
     cname = "hid_device"
@@ -478,16 +498,7 @@ class Bpf:
         if not sofile.exists():
             pytest.skip(f"Unable to locate {sofile}, assuming this BPF wasn't built")
 
-        # BTF and JSON are always relative to the original name
-        sofile_dir = sofile.with_suffix(".so.p")
-        if not sofile_dir.exists():
-            pytest.skip(
-                f"Unable to locate {sofile_dir}, assuming this BPF wasn't built"
-            )
-
-        # We recreate the BTF information for every .so so the Btf class knows
-        # about our types
-        btf = Btf.load(list(sofile_dir.iterdir()))
+        btf = _load_btf(name)
         for c in [
             HidProbeArgs,
             HidDevice,
