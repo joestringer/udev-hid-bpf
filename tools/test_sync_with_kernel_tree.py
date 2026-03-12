@@ -13,6 +13,15 @@ except ModuleNotFoundError:
 
 import sync_with_kernel_tree
 
+from importlib.metadata import version as get_version
+from packaging import version
+
+click_pkg_version = get_version("click")
+if version.parse(click_pkg_version) >= version.parse("8.2.0"):
+    CLI_RUNNER_KWARGS = {}
+else:
+    CLI_RUNNER_KWARGS = {"mix_stderr": False}
+
 
 @dataclass
 class VirtualGit:
@@ -139,7 +148,7 @@ def run_cli(virtual_git, command, args):
         command,
     ]
     _args.extend(args)
-    runner = CliRunner(mix_stderr=False)
+    runner = CliRunner(**CLI_RUNNER_KWARGS)
     return runner.invoke(
         sync_with_kernel_tree.cli,
         _args,
