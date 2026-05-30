@@ -12,6 +12,7 @@ tracing_sources = [
 sources = [
     '0010-Generic__touchpad.bpf.c',
     '0010-Simagic__SimTransfer.bpf.c',
+    '0010-Zuiki__Mascon.bpf.c',
 ]
 
 foreach bpf: tracing_sources
