@@ -11,6 +11,7 @@ tracing_sources = [
 # struct_ops (kernel v6.11+)
 sources = [
     '0010-Generic__touchpad.bpf.c',
+    '0010-Simagic__SimTransfer.bpf.c',
 ]
 
 foreach bpf: tracing_sources
